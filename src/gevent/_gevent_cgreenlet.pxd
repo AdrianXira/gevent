@@ -126,15 +126,15 @@ cdef class Greenlet(greenlet):
     cdef str _formatted_info
     cdef object _ident
 
-    cpdef bint has_links(self)
-    cpdef join(self, timeout=*)
-    cpdef bint ready(self)
-    cpdef bint successful(self)
-    cpdef rawlink(self, object callback)
-    cpdef str _formatinfo(self)
+    cdef bint has_links(self)
+    cdef join(self, timeout=*)
+    cdef bint ready(self)
+    cdef bint successful(self)
+    cdef rawlink(self, object callback)
+    cdef str _formatinfo(self)
 
     # Helper for killall()
-    cpdef bint _maybe_kill_before_start(self, exception)
+    cdef bint _maybe_kill_before_start(self, exception)
 
     # This is a helper function for a @property getter;
     # defining locals() for a @property doesn't seem to work.
@@ -155,13 +155,13 @@ cdef class Greenlet(greenlet):
     cdef inline __report_result(self, object result)
     cdef inline __report_error(self, tuple exc_info)
     # This is used as the target of a callback
-    # from the loop, and so needs to be a cpdef
-    cpdef _notify_links(self)
+    # from the loop, and so needs to be a cdef
+    cdef _notify_links(self)
 
     # Hmm, declaring _raise_exception causes issues when _imap
     # is also compiled.
     # TypeError: wrap() takes exactly one argument (0 given)
-    # cpdef _raise_exception(self)
+    # cdef _raise_exception(self)
 
 # Declare a bunch of imports as cdefs so they can
 # be accessed directly as static vars without
@@ -187,21 +187,21 @@ cdef class _dummy_event:
     cdef readonly bint pending
     cdef readonly bint active
 
-    cpdef stop(self)
-    cpdef start(self, cb)
-    cpdef close(self)
+    cdef stop(self)
+    cdef start(self, cb)
+    cdef close(self)
 
 cdef _dummy_event _cancelled_start_event
 cdef _dummy_event _start_completed_event
 
-cpdef _kill(Greenlet glet, object exception, object waiter)
+cdef _kill(Greenlet glet, object exception, object waiter)
 
 @cython.locals(diehards=list)
 cdef _killall3(list greenlets, object exception, object waiter)
 cdef _killall(list greenlets, object exception)
 
 @cython.locals(done=list)
-cpdef joinall(greenlets, timeout=*, raise_error=*, count=*)
+cdef joinall(greenlets, timeout=*, raise_error=*, count=*)
 
 cdef set _spawn_callbacks
 cdef void _call_spawn_callbacks(Greenlet gr) except *
