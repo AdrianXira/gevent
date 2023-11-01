@@ -178,7 +178,7 @@ cdef Waiter
 cdef wait
 cdef iwait
 cdef reraise
-cpdef GEVENT_CONFIG
+cdef GEVENT_CONFIG
 
 
 @cython.final
