@@ -89,6 +89,7 @@ static void _gevent_fs_poll_callback3(void* handlep, int status, const uv_stat_t
 
 
     gevent_fs_poll_t* handle = (gevent_fs_poll_t*)handlep;
+    assert(status == 0);
 
     handle->curr = *curr;
     handle->prev = *prev;

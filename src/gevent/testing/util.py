@@ -15,6 +15,8 @@ from gevent.monkey import get_original
 
 # pylint: disable=broad-except,attribute-defined-outside-init
 
+runtimelog = []
+MIN_RUNTIME = 1.0
 BUFFER_OUTPUT = False
 # This is set by the testrunner, defaulting to true (be quiet)
 # But if we're run standalone, default to false
@@ -246,7 +248,7 @@ def start(command, quiet=False, **kwargs):
     if timeout is not None:
         t = get_original('threading', 'Timer')(timeout, kill, args=(popen, ))
         popen.timer = t
-        t.daemon = True
+        t.setDaemon(True)
         t.start()
         popen.timer = t
     return popen
@@ -270,9 +272,7 @@ class RunResult(object):
                  output=None, # type: str
                  error=None, # type: str
                  name=None,
-                 run_count=0, skipped_count=0,
-                 run_duration=0, # type: float
-                 ):
+                 run_count=0, skipped_count=0):
         self.command = command
         self.run_kwargs = run_kwargs
         self.code = code
@@ -281,7 +281,6 @@ class RunResult(object):
         self.name = name
         self.run_count = run_count
         self.skipped_count = skipped_count
-        self.run_duration = run_duration
 
     @property
     def output_lines(self):
@@ -358,7 +357,7 @@ def _find_test_status(took, out):
         if m:
             skipped = _colorize('skipped', out[m.start():m.end()])
             skipped_count = int(out[m.start(1):m.end(1)])
-    status = status % (took, skipped) # pylint:disable=consider-using-augmented-assign
+    status = status % (took, skipped)
     if took > 10:
         status = _colorize('slow-test', status)
     return status, run_count, skipped_count
@@ -384,7 +383,7 @@ def run(command, **kwargs): # pylint:disable=too-many-locals
     try:
         time_start = perf_counter()
         out, err = popen.communicate()
-        duration = perf_counter() - time_start
+        took = perf_counter() - time_start
         if popen.was_killed or popen.poll() is None:
             result = 'TIMEOUT'
         else:
@@ -403,18 +402,19 @@ def run(command, **kwargs): # pylint:disable=too-many-locals
         out = out.rstrip()
         out += '\n'
         log('| %s\n%s', name, out)
-    status, run_count, skipped_count = _find_test_status(duration, out)
+    status, run_count, skipped_count = _find_test_status(took, out)
     if result:
         log('! %s [code %s] %s', name, result, status, color='error')
     elif not nested:
         log('- %s %s', name, status)
+    if took >= MIN_RUNTIME:
+        runtimelog.append((-took, name))
     return RunResult(
         command, kwargs, result,
         output=out, error=err,
         name=name,
         run_count=run_count,
-        skipped_count=skipped_count,
-        run_duration=duration,
+        skipped_count=skipped_count
     )
 
 
@@ -631,7 +631,7 @@ class alarm(threading.Thread):
 
     def __init__(self, timeout):
         threading.Thread.__init__(self)
-        self.daemon = True
+        self.setDaemon(True)
         self.timeout = timeout
         self.start()
 

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """gevent build & installation script"""
 from __future__ import print_function
 import sys
@@ -13,16 +12,6 @@ import os.path
 from setuptools import Extension, setup
 from setuptools import find_packages
 
-#
-# We import other files that are siblings of this file as modules. In
-# the past, setuptools guaranteed that this directory was on the path
-# (typically, the working directory) but in a PEP517 world, that's no
-# longer guaranteed to be the case. setuptools provides a PEP517
-# backend (``setuptools.build_meta:__legacy__``) that *does* guarantee
-# that, and we used it for a long time. But downstream packagers have begun
-# complaining about using it. So we futz with the path ourself.
-# (This is also an issue on Python3.11+ with $PYTHONSAFEPATH=1)
-sys.path.insert(0, os.path.dirname(__file__))
 
 from _setuputils import read
 from _setuputils import read_version
@@ -32,7 +21,6 @@ from _setuputils import GeventClean
 from _setuputils import BuildFailed
 from _setuputils import cythonize1
 from _setuputils import get_include_dirs
-from _setuputils import bool_from_environ
 
 # Environment variables that are intended to be used outside of our own
 # CI should be documented in ``installing_from_source.rst``
@@ -43,6 +31,13 @@ if WIN:
         os.environ['PYTHON_EXE'] = 'pypy' if PYPY else 'python'
     if not os.environ.get('PYEXE'):
         os.environ['PYEXE'] = os.environ['PYTHON_EXE']
+
+
+if PYPY and sys.pypy_version_info[:3] < (2, 6, 1): # pylint:disable=no-member
+    # We have to have CFFI >= 1.3.0, and this platform cannot upgrade
+    # it.
+    raise Exception("PyPy >= 2.6.1 is required")
+
 
 
 __version__ = read_version()
@@ -175,10 +170,6 @@ EXT_MODULES = [
     TRACER,
 ]
 
-if bool_from_environ('GEVENTSETUP_DISABLE_ARES'):
-    print("c-ares module disabled, not building")
-    EXT_MODULES.remove(ARES)
-
 LIBEV_CFFI_MODULE = 'src/gevent/libev/_corecffi_build.py:ffi'
 LIBUV_CFFI_MODULE = 'src/gevent/libuv/_corecffi_build.py:ffi'
 cffi_modules = []
@@ -201,17 +192,8 @@ greenlet_requires = [
     # We need to watch our greenlet version fairly carefully,
     # since we compile cython code that extends the greenlet object.
     # Binary compatibility would break if the greenlet struct changes.
-    # (Which it did in 0.4.14 for Python 3.7 and again in 0.4.17; with
-    # the release of 1.0a1 it began promising ABI stability with SemVer
-    # so we can add an upper bound).
-    # 1.1.0 is required for 3.10; it has a new ABI, but only on 1.1.0.
-    # 1.1.3 is needed for 3.11, and supports everything 1.1.0 did.
-    # 2.0.0 supports everything 1.1.3 did, but breaks the ABI in a way that hopefully
-    # won't break again.
-    # 3.0 is ABI compatible and adds support for Python 3.12 (but right
-    # now it's RC pending additional testing, so we only require it on 3.12)
-    'greenlet >= 2.0.0 ; platform_python_implementation=="CPython" and python_version < "3.11"',
-    'greenlet >= 3.0rc3 ; platform_python_implementation=="CPython" and python_version >= "3.11"',
+    # (Which it did in 0.4.14 for Python 3.7)
+    'greenlet >= 0.4.16; platform_python_implementation=="CPython"',
 ]
 
 # Note that we don't add cffi to install_requires, it's
@@ -236,8 +218,25 @@ install_requires = greenlet_requires + CFFI_REQUIRES + [
     # ultimately be published, but at this writing only the event
     # interfaces are.
     'zope.interface',
+    # setuptools is also used (via pkg_resources) for event
+    # notifications. It's a hard dependency of zope.interface
+    # anyway.
+    'setuptools',
 ]
 
+# We use headers from greenlet, so it needs to be installed before we
+# can compile. If it isn't already installed before we start
+# installing, and we say 'pip install gevent', a 'setup_requires'
+# doesn't save us: pip happily downloads greenlet and drops it in a
+# .eggs/ directory in the build directory, but that directory doesn't
+# have includes! So we fail to build a wheel, pip goes ahead and
+# installs greenlet, and builds gevent again, which works.
+
+# Since we ship the greenlet header for buildout support (which fails
+# to install the headers at all, AFAICS, we don't need to bother with
+# the buggy setup_requires.)
+
+setup_requires = CFFI_REQUIRES + []
 
 if PYPY:
     # These use greenlet/greenlet.h, which doesn't exist on PyPy
@@ -292,10 +291,8 @@ del _to_cythonize
 ## Extras
 
 EXTRA_DNSPYTHON = [
-    # We're not currently compatible with 2.0, and dnspython 1.x isn't
-    # compatible weth Python 3.10 because of the removal of ``collections.MutableMapping``.
-    'dnspython >= 1.16.0, < 2.0; python_version < "3.10"',
-    'idna; python_version < "3.10"',
+    'dnspython >= 1.16.0',
+    'idna',
 ]
 EXTRA_EVENTS = [
     # No longer does anything, but the extra must stay around
@@ -304,12 +301,12 @@ EXTRA_EVENTS = [
 ]
 
 EXTRA_PSUTIL_DEPS = [
-    # Versions of PyPy2 prior to 7.3.1 (maybe?) are incompatible with
-    # psutil >= 5.6.4. 5.7.0 seems to work.
+    # psutil fails  to build on PyPy on Windows. (TODO: Is that still the case?)
+    # Versions of PyPy2 prior to 7.4 (maybe?) are incompatible with
+    # psutil >= 5.6.4.
     # https://github.com/giampaolo/psutil/issues/1659
-    # PyPy on Windows can't build psutil, it fails to link with the missing symbol
-    # PyErr_SetFromWindowsErr.
-    'psutil >= 5.7.0; sys_platform != "win32" or platform_python_implementation == "CPython"',
+    'psutil >= 5.6.1 ; platform_python_implementation == "CPython" or python_version!="2.7"',
+    'psutil == 5.6.3 ; platform_python_implementation=="PyPy" and python_version=="2.7" and sys_platform != "win32"',
 ]
 
 EXTRA_MONITOR = [
@@ -318,6 +315,10 @@ EXTRA_MONITOR = [
 EXTRA_RECOMMENDED = [
     # We need this at runtime to use the libev-CFFI and libuv backends
     CFFI_DEP,
+    # Backport of selectors module to Python 2
+    'selectors2 ; python_version == "2.7"',
+    # Backport of socket.socketpair to Python 2; only needed on Windows
+    'backports.socketpair ; python_version == "2.7" and sys_platform == "win32"',
 ] + EXTRA_DNSPYTHON + EXTRA_EVENTS + EXTRA_MONITOR
 
 
@@ -387,6 +388,7 @@ def run_setup(ext_modules):
             'clean': GeventClean,
         },
         install_requires=install_requires,
+        setup_requires=setup_requires,
         extras_require={
             # Each extra intended for end users must be documented in install.rst
             'dnspython': EXTRA_DNSPYTHON,
@@ -395,13 +397,8 @@ def run_setup(ext_modules):
             'recommended': EXTRA_RECOMMENDED,
             # End end-user extras
             'docs': [
-                # our custom theme has problems on sphinx 7;
-                # For now, we have switched to the furo theme.
-                'sphinx',
-                'furo',
                 'repoze.sphinx.autointerface',
                 'sphinxcontrib-programoutput',
-                'zope.schema',
             ],
             # To the extent possible, we should work to make sure
             # our tests run, at least a basic set, without any of
@@ -413,14 +410,19 @@ def run_setup(ext_modules):
 
                 # We don't run coverage on Windows, and pypy can't build it there
                 # anyway (coveralls -> cryptopgraphy -> openssl).
-                # coverage 5 needs coveralls 1.11
-                'coverage >= 5.0 ; sys_platform != "win32"',
+                # As of coverage 5.0a6, coveralls (up to 1.9) won't work at all.
+                'coverage<5.0 ; sys_platform != "win32"',
+                'coveralls>=1.7.0 ; sys_platform != "win32"',
+
+                'futures ; python_version == "2.7"',
+                'mock ; python_version == "2.7"',
 
                 # leak checks. previously we had a hand-rolled version.
                 'objgraph',
 
-                # We still have some places we like to test with pkg_resources
-                'setuptools',
+                # The backport for contextvars to test patching. It sadly uses the same
+                # import name as the stdlib module.
+                'contextvars == 2.4 ; python_version > "3.0" and python_version < "3.7"',
             ],
         },
         # It's always safe to pass the CFFI keyword, even if
@@ -430,12 +432,13 @@ def run_setup(ext_modules):
         test_suite="greentest.testrunner",
         classifiers=[
             "License :: OSI Approved :: MIT License",
-            "Programming Language :: Python :: 3 :: Only",
+            "Programming Language :: Python :: 2.7",
+            "Programming Language :: Python :: 3.4",
+            "Programming Language :: Python :: 3.5",
+            "Programming Language :: Python :: 3.6",
+            "Programming Language :: Python :: 3.7",
             "Programming Language :: Python :: 3.8",
             "Programming Language :: Python :: 3.9",
-            "Programming Language :: Python :: 3.10",
-            "Programming Language :: Python :: 3.11",
-            "Programming Language :: Python :: 3.12",
             "Programming Language :: Python :: Implementation :: CPython",
             "Programming Language :: Python :: Implementation :: PyPy",
             "Operating System :: MacOS :: MacOS X",
@@ -446,7 +449,7 @@ def run_setup(ext_modules):
             "Intended Audience :: Developers",
             "Development Status :: 4 - Beta"
         ],
-        python_requires=">=3.8",
+        python_requires=">=2.7,!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*",
         entry_points={
             'gevent.plugins.monkey.will_patch_all': [
                 "signal_os_incompat = gevent.monkey:_subscribe_signal_os",

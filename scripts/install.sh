@@ -63,8 +63,7 @@ install () {
         mkdir -p $SNAKEPIT
         mkdir -p $BASE/versions
         update_pyenv $VERSION
-        # -Ofast makes the build take too long and times out Travis. It also affects
-        # process-wide floating-point flags - see: https://github.com/gevent/gevent/pull/1864
+        # -Ofast makes the build take too long and times out Travis.
         CFLAGS="-O1 -pipe -march=native" $BASE/pyenv/plugins/python-build/bin/python-build $VERSION $DESTINATION
     fi
 
@@ -91,12 +90,7 @@ install () {
     $DESTINATION/bin/python --version
     # Set the PATH to include the install's bin directory so pip
     # doesn't nag.
-    # Use quiet mode for this; PyPy2 has been seen to output
-    # an error:
-    #     UnicodeEncodeError: 'ascii' codec can't encode
-    #     character u'\u258f' in position 6: ordinal not in range(128)
-    # https://travis-ci.org/github/gevent/gevent/jobs/699973435
-    PATH="$DESTINATION/bin/:$PATH" $SNAKEPIT/$ALIAS -m pip install -q --upgrade pip wheel virtualenv
+    PATH="$DESTINATION/bin/:$PATH" $SNAKEPIT/$ALIAS -m pip install --upgrade pip wheel virtualenv
     ls -l $SNAKEPIT
     ls -l $BASE/versions
 
@@ -121,7 +115,7 @@ for var in "$@"; do
             install 3.8.2 python3.8 3.8.d
             ;;
         3.9)
-            install 3.9.0 python3.9 3.9.d
+            install 3.9-dev python3.9 3.9.d
             ;;
         pypy2.7)
             install pypy2.7-7.3.1 pypy2.7 pypy2.7.d

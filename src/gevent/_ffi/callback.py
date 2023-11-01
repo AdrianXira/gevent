@@ -1,16 +1,10 @@
-from __future__ import absolute_import
-from __future__ import print_function
-
-from zope.interface import implementer
-
-from gevent._interfaces import ICallback
+from __future__ import absolute_import, print_function
 
 __all__ = [
     'callback',
 ]
 
 
-@implementer(ICallback)
 class callback(object):
 
     __slots__ = ('callback', 'args')
@@ -31,11 +25,12 @@ class callback(object):
     # 'pending' has the same meaning as libev watchers: it is cleared before actually
     # running the callback
 
-    def __bool__(self):
+    def __nonzero__(self):
         # it's nonzero if it's pending or currently executing
         # NOTE: This depends on loop._run_callbacks setting the args property
         # to None.
         return self.args is not None
+    __bool__ = __nonzero__
 
     @property
     def pending(self):

@@ -28,7 +28,7 @@ import unittest
 # It's important to do this ASAP, because if we're monkey patched,
 # then importing things like the standard library test.support can
 # need to construct the hub (to check for IPv6 support using a socket).
-# We can't do it in the testrunner, as the testrunner spawns new, unrelated
+# We can't do it in the testrunner, as the testrunner spaws new, unrelated
 # processes.
 from .hub import QuietHub
 import gevent.hub
@@ -66,9 +66,6 @@ from .sysinfo import PY2
 from .sysinfo import PY3
 from .sysinfo import PY36
 from .sysinfo import PY37
-from .sysinfo import PY38
-from .sysinfo import PY39
-from .sysinfo import PY310
 
 from .sysinfo import PYPY
 from .sysinfo import PYPY3
@@ -85,7 +82,6 @@ from .sysinfo import RUNNING_ON_CI
 from .sysinfo import RESOLVER_NOT_SYSTEM
 from .sysinfo import RESOLVER_DNSPYTHON
 from .sysinfo import RESOLVER_ARES
-from .sysinfo import resolver_dnspython_available
 
 from .sysinfo import EXPECT_POOR_TIMER_RESOLUTION
 
@@ -97,7 +93,6 @@ from .skipping import skipOnCI
 from .skipping import skipOnPyPy3OnCI
 from .skipping import skipOnPyPy
 from .skipping import skipOnPyPyOnCI
-from .skipping import skipOnPyPyOnWindows
 from .skipping import skipOnPyPy3
 from .skipping import skipIf
 from .skipping import skipUnless
@@ -111,11 +106,10 @@ from .skipping import skipOnPurePython
 from .skipping import skipWithCExtensions
 from .skipping import skipOnLibuvOnTravisOnCPython27
 from .skipping import skipOnPy37
-from .skipping import skipOnPy310
-from .skipping import skipOnPy312
 from .skipping import skipOnPy3
 from .skipping import skipWithoutResource
 from .skipping import skipWithoutExternalNetwork
+from .skipping import skipOnPy2
 from .skipping import skipOnManylinux
 from .skipping import skipOnMacOnCI
 

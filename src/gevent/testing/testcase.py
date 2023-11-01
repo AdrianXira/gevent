@@ -58,14 +58,14 @@ class TimeAssertMixin(object):
             self.assertGreaterEqual(time_taken, min_time)
 
     @contextmanager
-    def runs_in_given_time(self, expected, fuzzy=None, min_time=None):
+    def runs_in_given_time(self, expected, fuzzy=None):
         if fuzzy is None:
             if sysinfo.EXPECT_POOR_TIMER_RESOLUTION or sysinfo.LIBUV:
                 # The noted timer jitter issues on appveyor/pypy3
                 fuzzy = expected * 5.0
             else:
                 fuzzy = expected / 2.0
-        min_time = min_time if min_time is not None else expected - fuzzy
+        min_time = expected - fuzzy
         max_time = expected + fuzzy
         start = perf_counter()
         yield (min_time, max_time)
@@ -73,8 +73,8 @@ class TimeAssertMixin(object):
         try:
             self.assertTrue(
                 min_time <= elapsed <= max_time,
-                'Expected: %r; elapsed: %r; min: %r; max: %r; fuzzy %r; clock_info: %s' % (
-                    expected, elapsed, min_time, max_time, fuzzy, get_clock_info('perf_counter')
+                'Expected: %r; elapsed: %r; fuzzy %r; clock_info: %s' % (
+                    expected, elapsed, fuzzy, get_clock_info('perf_counter')
                 ))
         except AssertionError:
             flaky.reraiseFlakyTestRaceCondition()
@@ -151,7 +151,7 @@ class TestTimeout(gevent.Timeout):
         gevent.Timeout.__init__(
             self,
             timeout,
-            '%r: test timed out (set class __timeout__ to increase)\n' % (method,),
+            '%r: test timed out\n' % (method,),
             ref=False
         )
 
@@ -177,11 +177,11 @@ def _wrap_timeout(timeout, method):
         return method
 
     @wraps(method)
-    def timeout_wrapper(self, *args, **kwargs):
+    def wrapper(self, *args, **kwargs):
         with TestTimeout(timeout, method):
             return method(self, *args, **kwargs)
 
-    return timeout_wrapper
+    return wrapper
 
 def _get_class_attr(classDict, bases, attr, default=AttributeError):
     NONE = object()
@@ -274,8 +274,7 @@ class TestCase(TestCaseMetaClass("NewBase",
     error_fatal = True
     uses_handle_error = True
     close_on_teardown = ()
-    # This is really used by the SubscriberCleanupMixin
-    __old_subscribers = () # pylint:disable=unused-private-member
+    __old_subscribers = ()
 
     def run(self, *args, **kwargs): # pylint:disable=signature-differs
         if self.switch_expected == 'default':
@@ -383,7 +382,6 @@ class TestCase(TestCaseMetaClass("NewBase",
         return error
 
     def assertMonkeyPatchedFuncSignatures(self, mod_name, func_names=(), exclude=()):
-        # If inspect.getfullargspec is not available,
         # We use inspect.getargspec because it's the only thing available
         # in Python 2.7, but it is deprecated
         # pylint:disable=deprecated-method,too-many-locals
@@ -410,13 +408,9 @@ class TestCase(TestCaseMetaClass("NewBase",
 
             try:
                 with warnings.catch_warnings():
-                    try:
-                        getfullargspec = inspect.getfullargspec
-                    except AttributeError:
-                        warnings.simplefilter("ignore")
-                        getfullargspec = inspect.getargspec
-                    gevent_sig = getfullargspec(gevent_func)
-                    sig = getfullargspec(func)
+                    warnings.simplefilter("ignore")
+                    gevent_sig = inspect.getargspec(gevent_func)
+                    sig = inspect.getargspec(func)
             except TypeError:
                 if funcs_given:
                     raise
@@ -425,27 +419,10 @@ class TestCase(TestCaseMetaClass("NewBase",
                 # Python 3 can check a lot more than Python 2 can.
                 continue
             self.assertEqual(sig.args, gevent_sig.args, func_name)
-            # The next two might not actually matter?
+            # The next three might not actually matter?
             self.assertEqual(sig.varargs, gevent_sig.varargs, func_name)
+            self.assertEqual(sig.keywords, gevent_sig.keywords, func_name)
             self.assertEqual(sig.defaults, gevent_sig.defaults, func_name)
-            if hasattr(sig, 'keywords'): # the old version
-                msg = (func_name, sig.keywords, gevent_sig.keywords)
-                try:
-                    self.assertEqual(sig.keywords, gevent_sig.keywords, msg)
-                except AssertionError:
-                    # Ok, if we take `kwargs` and the original function doesn't,
-                    # that's OK. We have to do that as a compatibility hack sometimes to
-                    # work across multiple python versions.
-                    self.assertIsNone(sig.keywords, msg)
-                    self.assertEqual('kwargs', gevent_sig.keywords)
-            else:
-                # The new hotness. Unfortunately, we can't actually check these things
-                # until we drop Python 2 support from the shared code. The only known place
-                # this is a problem is python 3.11 socket.create_connection(), which we manually
-                # ignore. So the checks all pass as is.
-                self.assertEqual(sig.kwonlyargs, gevent_sig.kwonlyargs, func_name)
-                self.assertEqual(sig.kwonlydefaults, gevent_sig.kwonlydefaults, func_name)
-            # Should deal with others: https://docs.python.org/3/library/inspect.html#inspect.getfullargspec
 
     def assertEqualFlakyRaceCondition(self, a, b):
         try:
@@ -453,9 +430,5 @@ class TestCase(TestCaseMetaClass("NewBase",
         except AssertionError:
             flaky.reraiseFlakyTestRaceCondition()
 
-    def assertStartsWith(self, it, has_prefix):
-        self.assertTrue(it.startswith(has_prefix), (it, has_prefix))
-
-    def assertNotMonkeyPatched(self):
-        from gevent import monkey
-        self.assertFalse(monkey.is_anything_patched())
+    assertRaisesRegex = getattr(BaseTestCase, 'assertRaisesRegex',
+                                getattr(BaseTestCase, 'assertRaisesRegexp'))

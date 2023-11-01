@@ -13,9 +13,9 @@ cdef gmctime
 
 
 cdef class GreenletTracer:
-    cdef readonly object active_greenlet
-    cdef readonly object previous_trace_function
-    cdef readonly Py_ssize_t greenlet_switch_counter
+    cpdef readonly object active_greenlet
+    cpdef readonly object previous_trace_function
+    cpdef readonly Py_ssize_t greenlet_switch_counter
 
     cdef bint _killed
 
@@ -28,16 +28,16 @@ cdef class GreenletTracer:
 
 @cython.internal
 cdef class _HubTracer(GreenletTracer):
-    cdef readonly object hub
-    cdef readonly double max_blocking_time
+    cpdef readonly object hub
+    cpdef readonly double max_blocking_time
 
 
 cdef class HubSwitchTracer(_HubTracer):
-    cdef readonly double last_entered_hub
+    cpdef readonly double last_entered_hub
 
 cdef class MaxSwitchTracer(_HubTracer):
-    cdef readonly double max_blocking
-    cdef readonly double last_switch
+    cpdef readonly double max_blocking
+    cpdef readonly double last_switch
 
     @cython.locals(switched_at=double)
     cpdef _trace(self, str event, tuple args)

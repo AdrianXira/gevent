@@ -20,7 +20,6 @@ import threading
 import gc
 import textwrap
 import json
-import pathlib
 from test.support import FakePath
 
 try:
@@ -196,28 +195,6 @@ class ProcessTestCase(BaseTestCase):
                  "import sys; sys.stdout.write(sys.stdin.read().upper())"],
                 input=b'pear')
         self.assertIn(b'PEAR', output)
-
-    def test_check_output_input_none(self):
-        """input=None has a legacy meaning of input='' on check_output."""
-        output = subprocess.check_output(
-                [sys.executable, "-c",
-                 "import sys; print('XX' if sys.stdin.read() else '')"],
-                input=None)
-        self.assertNotIn(b'XX', output)
-
-    def test_check_output_input_none_text(self):
-        output = subprocess.check_output(
-                [sys.executable, "-c",
-                 "import sys; print('XX' if sys.stdin.read() else '')"],
-                input=None, text=True)
-        self.assertNotIn('XX', output)
-
-    def test_check_output_input_none_universal_newlines(self):
-        output = subprocess.check_output(
-                [sys.executable, "-c",
-                 "import sys; print('XX' if sys.stdin.read() else '')"],
-                input=None, universal_newlines=True)
-        self.assertNotIn('XX', output)
 
     def test_check_output_stdout_arg(self):
         # check_output() refuses to accept 'stdout' argument
@@ -396,9 +373,7 @@ class ProcessTestCase(BaseTestCase):
         # matches *expected_cwd*.
         p = subprocess.Popen([python_arg, "-c",
                               "import os, sys; "
-                              "buf = sys.stdout.buffer; "
-                              "buf.write(os.getcwd().encode()); "
-                              "buf.flush(); "
+                              "sys.stdout.write(os.getcwd()); "
                               "sys.exit(47)"],
                               stdout=subprocess.PIPE,
                               **kwargs)
@@ -407,7 +382,7 @@ class ProcessTestCase(BaseTestCase):
         self.assertEqual(47, p.returncode)
         normcase = os.path.normcase
         self.assertEqual(normcase(expected_cwd),
-                         normcase(p.stdout.read().decode()))
+                         normcase(p.stdout.read().decode("utf-8")))
 
     def test_cwd(self):
         # Check that cwd changes the cwd for the child process.
@@ -1374,23 +1349,28 @@ class ProcessTestCase(BaseTestCase):
         p.communicate(b"x" * 2**20)
 
     def test_repr(self):
-        path_cmd = pathlib.Path("my-tool.py")
-        pathlib_cls = path_cmd.__class__.__name__
+        # Run a command that waits for user input, to check the repr() of
+        # a Proc object while and after the sub-process runs.
+        code = 'import sys; input(); sys.exit(57)'
+        cmd = [sys.executable, '-c', code]
+        result = "<Popen: returncode: {}"
 
-        cases = [
-            ("ls", True, 123, "<Popen: returncode: 123 args: 'ls'>"),
-            ('a' * 100, True, 0,
-             "<Popen: returncode: 0 args: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...>"),
-            (["ls"], False, None, "<Popen: returncode: None args: ['ls']>"),
-            (["ls", '--my-opts', 'a' * 100], False, None,
-             "<Popen: returncode: None args: ['ls', '--my-opts', 'aaaaaaaaaaaaaaaaaaaaaaaa...>"),
-            (path_cmd, False, 7, f"<Popen: returncode: 7 args: {pathlib_cls}('my-tool.py')>")
-        ]
-        with unittest.mock.patch.object(subprocess.Popen, '_execute_child'):
-            for cmd, shell, code, sx in cases:
-                p = subprocess.Popen(cmd, shell=shell)
-                p.returncode = code
-                self.assertEqual(repr(p), sx)
+        with subprocess.Popen(
+                cmd, stdin=subprocess.PIPE, universal_newlines=True) as proc:
+            self.assertIsNone(proc.returncode)
+            self.assertTrue(
+                repr(proc).startswith(result.format(proc.returncode)) and
+                repr(proc).endswith('>')
+            )
+
+            proc.communicate(input='exit...\n')
+            proc.wait()
+
+            self.assertIsNotNone(proc.returncode)
+            self.assertTrue(
+                repr(proc).startswith(result.format(proc.returncode)) and
+                repr(proc).endswith('>')
+            )
 
     def test_communicate_epipe_only_stdin(self):
         # Issue 10963: communicate() should hide EPIPE
@@ -1844,10 +1824,6 @@ class POSIXProcessTestCase(BaseTestCase):
         with self.assertRaises(ValueError):
             subprocess.check_call(ZERO_RETURN_CMD, user=-1)
 
-        with self.assertRaises(OverflowError):
-            subprocess.check_call(ZERO_RETURN_CMD,
-                                  cwd=os.curdir, env=os.environ, user=2**64)
-
         if pwd is None and name_uid is not None:
             with self.assertRaises(ValueError):
                 subprocess.check_call(ZERO_RETURN_CMD, user=name_uid)
@@ -1890,10 +1866,6 @@ class POSIXProcessTestCase(BaseTestCase):
         # make sure we bomb on negative values
         with self.assertRaises(ValueError):
             subprocess.check_call(ZERO_RETURN_CMD, group=-1)
-
-        with self.assertRaises(OverflowError):
-            subprocess.check_call(ZERO_RETURN_CMD,
-                                  cwd=os.curdir, env=os.environ, group=2**64)
 
         if grp is None:
             with self.assertRaises(ValueError):
@@ -1942,11 +1914,6 @@ class POSIXProcessTestCase(BaseTestCase):
         # make sure we bomb on negative values
         with self.assertRaises(ValueError):
             subprocess.check_call(ZERO_RETURN_CMD, extra_groups=[-1])
-
-        with self.assertRaises(ValueError):
-            subprocess.check_call(ZERO_RETURN_CMD,
-                                  cwd=os.curdir, env=os.environ,
-                                  extra_groups=[2**64])
 
         if grp is None:
             with self.assertRaises(ValueError):
@@ -2969,7 +2936,6 @@ class POSIXProcessTestCase(BaseTestCase):
         pid = p.pid
         with support.check_warnings(('', ResourceWarning)):
             p = None
-            support.gc_collect()  # For PyPy or other GCs.
 
         os.kill(pid, signal.SIGKILL)
         if mswindows:
@@ -3178,19 +3144,6 @@ class POSIXProcessTestCase(BaseTestCase):
         # Don't check the returncode value: the test reads the exit status,
         # so Popen failed to read it and uses a default returncode instead.
         self.assertIsNotNone(proc.returncode)
-
-    def test_send_signal_race2(self):
-        # bpo-40550: the process might exist between the returncode check and
-        # the kill operation
-        p = subprocess.Popen([sys.executable, '-c', 'exit(1)'])
-
-        # wait for process to exit
-        while not p.returncode:
-            p.poll()
-
-        with mock.patch.object(p, 'poll', new=lambda: None):
-            p.returncode = None
-            p.send_signal(signal.SIGTERM)
 
     def test_communicate_repeated_call_after_stdout_close(self):
         proc = subprocess.Popen([sys.executable, '-c',

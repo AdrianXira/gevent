@@ -48,7 +48,7 @@ def find_ready_matching(ready, flag):
     return match
 
 
-class BaseSelectorTestCase:
+class BaseSelectorTestCase(unittest.TestCase):
 
     def make_socketpair(self):
         rd, wr = socketpair()
@@ -492,28 +492,26 @@ class ScalableSelectorMixIn:
         self.assertEqual(NUM_FDS // 2, len(fds))
 
 
-class DefaultSelectorTestCase(BaseSelectorTestCase, unittest.TestCase):
+class DefaultSelectorTestCase(BaseSelectorTestCase):
 
     SELECTOR = selectors.DefaultSelector
 
 
-class SelectSelectorTestCase(BaseSelectorTestCase, unittest.TestCase):
+class SelectSelectorTestCase(BaseSelectorTestCase):
 
     SELECTOR = selectors.SelectSelector
 
 
 @unittest.skipUnless(hasattr(selectors, 'PollSelector'),
                      "Test needs selectors.PollSelector")
-class PollSelectorTestCase(BaseSelectorTestCase, ScalableSelectorMixIn,
-                           unittest.TestCase):
+class PollSelectorTestCase(BaseSelectorTestCase, ScalableSelectorMixIn):
 
     SELECTOR = getattr(selectors, 'PollSelector', None)
 
 
 @unittest.skipUnless(hasattr(selectors, 'EpollSelector'),
                      "Test needs selectors.EpollSelector")
-class EpollSelectorTestCase(BaseSelectorTestCase, ScalableSelectorMixIn,
-                            unittest.TestCase):
+class EpollSelectorTestCase(BaseSelectorTestCase, ScalableSelectorMixIn):
 
     SELECTOR = getattr(selectors, 'EpollSelector', None)
 
@@ -530,8 +528,7 @@ class EpollSelectorTestCase(BaseSelectorTestCase, ScalableSelectorMixIn,
 
 @unittest.skipUnless(hasattr(selectors, 'KqueueSelector'),
                      "Test needs selectors.KqueueSelector)")
-class KqueueSelectorTestCase(BaseSelectorTestCase, ScalableSelectorMixIn,
-                             unittest.TestCase):
+class KqueueSelectorTestCase(BaseSelectorTestCase, ScalableSelectorMixIn):
 
     SELECTOR = getattr(selectors, 'KqueueSelector', None)
 
@@ -563,15 +560,19 @@ class KqueueSelectorTestCase(BaseSelectorTestCase, ScalableSelectorMixIn,
 
 @unittest.skipUnless(hasattr(selectors, 'DevpollSelector'),
                      "Test needs selectors.DevpollSelector")
-class DevpollSelectorTestCase(BaseSelectorTestCase, ScalableSelectorMixIn,
-                              unittest.TestCase):
+class DevpollSelectorTestCase(BaseSelectorTestCase, ScalableSelectorMixIn):
 
     SELECTOR = getattr(selectors, 'DevpollSelector', None)
 
 
-def tearDownModule():
+
+def test_main():
+    tests = [DefaultSelectorTestCase, SelectSelectorTestCase,
+             PollSelectorTestCase, EpollSelectorTestCase,
+             KqueueSelectorTestCase, DevpollSelectorTestCase]
+    support.run_unittest(*tests)
     support.reap_children()
 
 
 if __name__ == "__main__":
-    unittest.main()
+    test_main()

@@ -25,7 +25,6 @@ libev = _corecffi.lib # pylint:disable=no-member
 
 if hasattr(libev, 'vfd_open'):
     # Must be on windows
-    # pylint:disable=c-extension-no-member
     assert sys.platform.startswith("win"), "vfd functions only needed on windows"
     vfd_open = libev.vfd_open
     vfd_free = libev.vfd_free
@@ -53,26 +52,10 @@ from gevent._ffi.loop import AbstractCallbacks
 from gevent._ffi.loop import assign_standard_callbacks
 
 class _Callbacks(AbstractCallbacks):
-    # pylint:disable=arguments-differ,arguments-renamed
+    # pylint:disable=arguments-differ
 
-    def python_check_callback(self, *args):
-        # There's a pylint bug (pylint 2.9.3, astroid 2.6.2) that causes pylint to crash
-        # with an AttributeError on certain types of arguments-differ errors
-        # But code in _ffi/loop depends on being able to find the watcher_ptr
-        # argument is the local frame. BUT it gets invoked before the function body runs.
-        # Hence the override of _find_watcher_ptr_in_traceback.
-        # pylint:disable=unused-variable
-        _loop, watcher_ptr, _events = args
-        AbstractCallbacks.python_check_callback(self, watcher_ptr)
-
-    def _find_watcher_ptr_in_traceback(self, tb):
-        if tb is not None:
-            l = tb.tb_frame.f_locals
-            if 'watcher_ptr' in l:
-                return l['watcher_ptr']
-            if 'args' in l and len(l['args']) == 3:
-                return l['args'][1]
-        return AbstractCallbacks._find_watcher_ptr_in_traceback(self, tb)
+    def python_check_callback(self, _loop, watcher_ptr, _events):
+        pass
 
     def python_prepare_callback(self, _loop_ptr, watcher_ptr, _events):
         AbstractCallbacks.python_prepare_callback(self, watcher_ptr)
@@ -301,7 +284,6 @@ class loop(AbstractLoop):
         libev.ev_timer_start(self._ptr, self._timer0)
 
     def _stop_aux_watchers(self):
-        super(loop, self)._stop_aux_watchers()
         if libev.ev_is_active(self._prepare):
             self.ref()
             libev.ev_prepare_stop(self._ptr, self._prepare)
@@ -312,10 +294,6 @@ class loop(AbstractLoop):
             libev.ev_timer_stop(self._timer0)
 
     def _setup_for_run_callback(self):
-        # XXX: libuv needs to start the callback timer to be sure
-        # that the loop wakes up and calls this. Our C version doesn't
-        # do this.
-        # self._start_callback_timer()
         self.ref() # we should go through the loop now
 
     def destroy(self):

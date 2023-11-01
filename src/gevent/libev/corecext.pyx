@@ -30,27 +30,17 @@ from cpython.ref cimport Py_INCREF
 from cpython.ref cimport Py_DECREF
 from cpython.mem cimport PyMem_Malloc
 from cpython.mem cimport PyMem_Free
-from cpython.object cimport PyObject
-from cpython.exc cimport PyErr_NormalizeException
-from cpython.exc cimport PyErr_WriteUnraisable
 from libc.errno cimport errno
-from cpython cimport PyErr_Fetch
-from cpython cimport PyErr_Occurred
-from cpython cimport PyObject
-from cpython cimport PyErr_Clear
 
 cdef extern from "Python.h":
     int    Py_ReprEnter(object)
     void   Py_ReprLeave(object)
-
-    int PyException_SetTraceback(PyObject* ex, PyObject* tb) except *
 
 import sys
 import os
 import traceback
 import signal as signalmodule
 from gevent import getswitchinterval
-from gevent.exceptions import HubDestroyed
 
 
 __all__ = ['get_version',
@@ -203,9 +193,10 @@ cpdef _flags_to_list(unsigned int flags):
     return result
 
 
-
-basestring = (bytes, str)
-
+if sys.version_info[0] >= 3:
+    basestring = (bytes, str)
+else:
+    basestring = __builtins__.basestring
 
 
 cpdef unsigned int _flags_to_int(object flags) except? -1:
@@ -331,13 +322,7 @@ cdef public class callback [object PyGeventCallbackObject, type PyGeventCallback
     def _format(self):
         return ''
 
-# See comments in cares.pyx about DEF constants and when to use
-# what kind.
-cdef extern from *:
-    """
-    #define CALLBACK_CHECK_COUNT 50
-    """
-    int CALLBACK_CHECK_COUNT
+DEF CALLBACK_CHECK_COUNT = 50
 
 @cython.final
 @cython.internal
@@ -349,10 +334,6 @@ cdef class CallbackFIFO(object):
         self.head = None
         self.tail = None
 
-    cdef inline clear(self):
-        self.head = None
-        self.tail = None
-
     cdef inline callback popleft(self):
         cdef callback head = self.head
         self.head = head.next
@@ -360,6 +341,7 @@ cdef class CallbackFIFO(object):
             self.tail = None
         head.next = None
         return head
+
 
     cdef inline append(self, callback new_tail):
         assert not new_tail.next
@@ -370,6 +352,7 @@ cdef class CallbackFIFO(object):
                 self.head = new_tail
                 return
             self.tail = self.head
+
 
         assert self.head is not None
         old_tail = self.tail
@@ -406,7 +389,6 @@ cdef public class loop [object PyGeventLoopObject, type PyGeventLoop_Type]:
     ## embedded struct members
     cdef libev.ev_prepare _prepare
     cdef libev.ev_timer _timer0
-    cdef libev.ev_async _threadsafe_async
     # We'll only actually start this timer if we're on Windows,
     # but it doesn't hurt to compile it in on all platforms.
     cdef libev.ev_timer _periodic_signal_checker
@@ -436,8 +418,6 @@ cdef public class loop [object PyGeventLoopObject, type PyGeventLoop_Type]:
         libev.ev_timer_init(&self._timer0,
                             <void*>gevent_noop,
                             0.0, 0.0)
-        libev.ev_async_init(&self._threadsafe_async,
-                            <void*>gevent_noop)
 
         cdef unsigned int c_flags
         if ptr:
@@ -471,10 +451,6 @@ cdef public class loop [object PyGeventLoopObject, type PyGeventLoop_Type]:
         libev.ev_prepare_start(self._ptr, &self._prepare)
         libev.ev_unref(self._ptr)
 
-        libev.ev_async_start(self._ptr, &self._threadsafe_async)
-        libev.ev_unref(self._ptr)
-
-
     def __init__(self, object flags=None, object default=None, libev.intptr_t ptr=0):
         self._callbacks = CallbackFIFO()
         # See libev.corecffi for this attribute.
@@ -486,29 +462,19 @@ cdef public class loop [object PyGeventLoopObject, type PyGeventLoop_Type]:
         self.starting_timer_may_update_loop_time = True
         cdef libev.ev_tstamp now = libev.ev_now(self._ptr)
         cdef libev.ev_tstamp expiration = now + <libev.ev_tstamp>getswitchinterval()
-        cdef object cb_callable # for printing later
-        assert not PyErr_Occurred()
+
         try:
             libev.ev_timer_stop(self._ptr, &self._timer0)
             while self._callbacks.head is not None:
                 cb = self._callbacks.popleft()
+
                 libev.ev_unref(self._ptr)
                 # On entry, this will set cb.callback to None,
                 # changing cb.pending from True to False; on exit,
                 # this will set cb.args to None, changing bool(cb)
                 # from True to False.
                 # XXX: Why is this a C callback, not cython?
-                cb_callable = cb.callback
                 gevent_call(self, cb)
-                if PyErr_Occurred():
-                    # Exceptions should not escape gevent_call,
-                    # but just in case...
-                    # note we don't use gevent_handle_error here, between
-                    # running callbacks is a fairly fragile state and
-                    # that directs back up to the hub and user code.
-                    PyErr_WriteUnraisable(cb_callable)
-                    PyErr_Clear()
-                cb_callable = None
                 count -= 1
 
                 if count == 0 and self._callbacks.head is not None:
@@ -538,9 +504,6 @@ cdef public class loop [object PyGeventLoopObject, type PyGeventLoop_Type]:
         if libev.ev_is_active(&self._periodic_signal_checker):
             libev.ev_ref(ptr)
             libev.ev_timer_stop(ptr, &self._periodic_signal_checker)
-        if libev.ev_is_active(&self._threadsafe_async):
-            libev.ev_ref(ptr)
-            libev.ev_async_stop(ptr, &self._threadsafe_async)
 
     def destroy(self):
         cdef libev.ev_loop* ptr = self._ptr
@@ -554,8 +517,8 @@ cdef public class loop [object PyGeventLoopObject, type PyGeventLoop_Type]:
                 # else with it will likely cause a crash.
                 return
             # Mark as destroyed
-            self._stop_watchers(ptr)
             libev.ev_set_userdata(ptr, NULL)
+            self._stop_watchers(ptr)
             if SYSERR_CALLBACK == self._handle_syserr:
                 set_syserr_cb(None)
             libev.ev_loop_destroy(ptr)
@@ -597,11 +560,6 @@ cdef public class loop [object PyGeventLoopObject, type PyGeventLoop_Type]:
     cpdef handle_error(self, context, type, value, tb):
         cdef object handle_error
         cdef object error_handler = self.error_handler
-        if type is HubDestroyed:
-            self._callbacks.clear()
-            self.break_()
-            return
-
         if error_handler is not None:
             # we do want to do getattr every time so that setting Hub.handle_error property just works
             handle_error = getattr(error_handler, 'handle_error', error_handler)
@@ -749,12 +707,6 @@ cdef public class loop [object PyGeventLoopObject, type PyGeventLoop_Type]:
         libev.ev_ref(self._ptr)
         return cb
 
-    def run_callback_threadsafe(self, func, *args):
-        # We rely on the GIL to make this threadsafe.
-        cb = self.run_callback(func, *args)
-        libev.ev_async_send(self._ptr, &self._threadsafe_async)
-        return cb
-
     def _format(self):
         if not self._ptr:
             return 'destroyed'
@@ -815,38 +767,28 @@ cdef public class loop [object PyGeventLoopObject, type PyGeventLoop_Type]:
         # Explicitly not EV_USE_SIGNALFD
         raise AttributeError("sigfd")
 
+try:
+    from zope.interface import classImplements
+except ImportError:
+    pass
+else:
+    # XXX: This invokes the side-table lookup, we would
+    # prefer to have it stored directly on the class.
+    from gevent._interfaces import ILoop
+    classImplements(loop, ILoop)
 
-from zope.interface import classImplements
-
-# XXX: This invokes the side-table lookup, we would
-# prefer to have it stored directly on the class. That means we
-# need a class variable ``__implemented__``, but that's hard in
-# Cython
-from gevent._interfaces import ILoop
-from gevent._interfaces import ICallback
-classImplements(loop, ILoop)
-classImplements(callback, ICallback)
-
-
-cdef extern from *:
-    """
-    #define FLAG_WATCHER_OWNS_PYREF  (1 << 0) /* 0x1 */
-    #define FLAG_WATCHER_NEEDS_EVREF (1 << 1) /* 0x2 */
-    #define FLAG_WATCHER_UNREF_BEFORE_START (1 << 2) /* 0x4 */
-    #define FLAG_WATCHER_MASK_UNREF_NEEDS_REF 0x6
-    """
-    # about readonly _flags attribute:
-    # bit #1 set if object owns Python reference to itself (Py_INCREF was
-    # called and we must call Py_DECREF later)
-    unsigned int FLAG_WATCHER_OWNS_PYREF
-    # bit #2 set if ev_unref() was called and we must call ev_ref() later
-    unsigned int FLAG_WATCHER_NEEDS_EVREF
-    # bit #3 set if user wants to call ev_unref() before start()
-    unsigned int FLAG_WATCHER_UNREF_BEFORE_START
-    # bits 2 and 3 are *both* set when we are active, but the user
-    # request us not to be ref'd anymore. We unref us (because going active will
-    # ref us) and then make a note of this in the future
-    unsigned int FLAG_WATCHER_MASK_UNREF_NEEDS_REF
+# about readonly _flags attribute:
+# bit #1 set if object owns Python reference to itself (Py_INCREF was
+# called and we must call Py_DECREF later)
+DEF FLAG_WATCHER_OWNS_PYREF = 1 << 0 # 0x1
+# bit #2 set if ev_unref() was called and we must call ev_ref() later
+DEF FLAG_WATCHER_NEEDS_EVREF = 1 << 1 # 0x2
+# bit #3 set if user wants to call ev_unref() before start()
+DEF FLAG_WATCHER_UNREF_BEFORE_START = 1 << 2 # 0x4
+# bits 2 and 3 are *both* set when we are active, but the user
+# request us not to be ref'd anymore. We unref us (because going active will
+# ref us) and then make a note of this in the future
+DEF FLAG_WATCHER_MASK_UNREF_NEEDS_REF = 0x6
 
 
 cdef void _python_incref(watcher self):
@@ -1390,7 +1332,8 @@ EV_USE_4HEAP = libev.EV_USE_4HEAP
 
 # Things used in callbacks.c
 
-from traceback import print_exception
+from cpython cimport PyErr_Fetch
+from cpython cimport PyObject
 
 cdef public void gevent_handle_error(loop loop, object context):
     cdef PyObject* typep
@@ -1404,15 +1347,12 @@ cdef public void gevent_handle_error(loop loop, object context):
     # If it was set, this will clear it, and we will own
     # the references.
     PyErr_Fetch(&typep, &valuep, &tracebackp)
+    # TODO: Should we call PyErr_Normalize? There's code in
+    # Hub.handle_error that works around what looks like an
+    # unnormalized exception.
+
     if not typep:
         return
-
-    PyErr_NormalizeException(&typep, &valuep, &tracebackp)
-
-
-    if tracebackp:
-        PyException_SetTraceback(valuep, tracebackp)
-
     # This assignment will do a Py_INCREF
     # on the value. We already own the reference
     # returned from PyErr_Fetch,
@@ -1427,26 +1367,10 @@ cdef public void gevent_handle_error(loop loop, object context):
         traceback = <object>tracebackp
         Py_DECREF(traceback)
 
-
-    # Prior to Cython 3.<something>, we relied on Cython printing an
-    # uncaught exception here (because we don't return a Python object, and
-    # we have no except clause). It seems that as-of 3.0b3 at least,
-    # that no longer happens by default; if we want un caught, unraisable exception to be
-    # reported, we need to do so ourself.
-    try:
-        loop.handle_error(context, type, value, traceback)
-    except:
-        # In an except: block, PyErr_Occurred() is actually false.
-        # Cython has captured the exception and moved it around. The
-        # exc_info is available at the python level, but
-        # the C level APIs aren't going to work. In debug builds,
-        # PyErr_WriteUnraisable will crash with an assertion.
-        #
-        # It would be nice to call ``sys.unraisablehook``, but the default
-        # implementation of that requires that the argument be of
-        # a specific private type we cannot construct.
-        print_exception(*sys.exc_info())
-
+    # If this method fails by raising an exception,
+    # cython will print it for us because we don't return a
+    # Python object and we don't declare an `except` clause.
+    loop.handle_error(context, type, value, traceback)
 
 cdef public tuple _empty_tuple = ()
 

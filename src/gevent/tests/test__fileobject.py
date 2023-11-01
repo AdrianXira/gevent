@@ -1,5 +1,4 @@
-from __future__ import print_function
-from __future__ import absolute_import
+from __future__ import print_function, absolute_import
 
 import functools
 import gc
@@ -12,17 +11,20 @@ import unittest
 import gevent
 from gevent import fileobject
 from gevent._fileobjectcommon import OpenDescriptor
-try:
-    from gevent._fileobjectposix import GreenOpenDescriptor
-except ImportError:
-    GreenOpenDescriptor = None
 
+from gevent._compat import PY2
+from gevent._compat import PY3
+from gevent._compat import text_type
 
 import gevent.testing as greentest
 from gevent.testing import sysinfo
 
+try:
+    ResourceWarning
+except NameError:
+    class ResourceWarning(Warning):
+        "Python 2 fallback"
 
-# pylint:disable=unspecified-encoding
 
 def Writer(fobj, line):
     for character in line:
@@ -34,7 +36,7 @@ def Writer(fobj, line):
 def close_fd_quietly(fd):
     try:
         os.close(fd)
-    except OSError:
+    except (IOError, OSError):
         pass
 
 def skipUnlessWorksWithRegularFiles(func):
@@ -45,24 +47,7 @@ def skipUnlessWorksWithRegularFiles(func):
         func(self)
     return f
 
-
-class CleanupMixin(object):
-    def _mkstemp(self, suffix):
-        fileno, path = tempfile.mkstemp(suffix)
-        self.addCleanup(os.remove, path)
-        self.addCleanup(close_fd_quietly, fileno)
-        return fileno, path
-
-    def _pipe(self):
-        r, w = os.pipe()
-        self.addCleanup(close_fd_quietly, r)
-        self.addCleanup(close_fd_quietly, w)
-        return r, w
-
-
-class TestFileObjectBlock(CleanupMixin,
-                          greentest.TestCase):
-    # serves as a base for the concurrent tests too
+class TestFileObjectBlock(greentest.TestCase): # serves as a base for the concurrent tests too
 
     WORKS_WITH_REGULAR_FILES = True
 
@@ -73,7 +58,10 @@ class TestFileObjectBlock(CleanupMixin,
         return self._getTargetClass()(*args, **kwargs)
 
     def _test_del(self, **kwargs):
-        r, w = self._pipe()
+        r, w = os.pipe()
+        self.addCleanup(close_fd_quietly, r)
+        self.addCleanup(close_fd_quietly, w)
+
         self._do_test_del((r, w), **kwargs)
 
     def _do_test_del(self, pipe, **kwargs):
@@ -112,10 +100,10 @@ class TestFileObjectBlock(CleanupMixin,
     def test_del_close(self):
         self._test_del(close=True)
 
-
     @skipUnlessWorksWithRegularFiles
     def test_seek(self):
-        fileno, path = self._mkstemp('.gevent.test__fileobject.test_seek')
+        fileno, path = tempfile.mkstemp('.gevent.test__fileobject.test_seek')
+        self.addCleanup(os.remove, path)
 
         s = b'a' * 1024
         os.write(fileno, b'B' * 15)
@@ -128,9 +116,11 @@ class TestFileObjectBlock(CleanupMixin,
 
         with open(path, 'rb') as f_raw:
             f = self._makeOne(f_raw, 'rb', close=False)
-            # On Python 3, all objects should have seekable.
-            # On Python 2, only our custom objects do.
-            self.assertTrue(f.seekable())
+
+            if PY3 or hasattr(f, 'seekable'):
+                # On Python 3, all objects should have seekable.
+                # On Python 2, only our custom objects do.
+                self.assertTrue(f.seekable())
             f.seek(15)
             self.assertEqual(15, f.tell())
 
@@ -145,7 +135,8 @@ class TestFileObjectBlock(CleanupMixin,
     def __check_native_matches(self, byte_data, open_mode,
                                meth='read', open_path=True,
                                **open_kwargs):
-        fileno, path = self._mkstemp('.gevent_test_' + open_mode)
+        fileno, path = tempfile.mkstemp('.gevent_test_' + open_mode)
+        self.addCleanup(os.remove, path)
 
         os.write(fileno, byte_data)
         os.close(fileno)
@@ -159,7 +150,7 @@ class TestFileObjectBlock(CleanupMixin,
         else:
             # Note that we don't use ``io.open()`` for the raw file,
             # on Python 2. We want 'r' to mean what the usual call to open() means.
-            opener = io.open
+            opener = io.open if PY3 else open
             with opener(path, open_mode, **open_kwargs) as raw:
                 with self._makeOne(raw) as f:
                     gevent_data = getattr(f, meth)()
@@ -180,7 +171,7 @@ class TestFileObjectBlock(CleanupMixin,
             'r+',
             buffering=5, encoding='utf-8'
         )
-        self.assertIsInstance(gevent_data, str)
+        self.assertIsInstance(gevent_data, text_type)
 
     @skipUnlessWorksWithRegularFiles
     def test_does_not_leak_on_exception(self):
@@ -190,8 +181,6 @@ class TestFileObjectBlock(CleanupMixin,
 
     @skipUnlessWorksWithRegularFiles
     def test_rbU_produces_bytes_readline(self):
-        if sys.version_info > (3, 11):
-            self.skipTest("U file mode was removed in 3.11")
         # Including U in rb still produces bytes.
         # Note that the universal newline behaviour is
         # essentially ignored in explicit bytes mode.
@@ -205,8 +194,6 @@ class TestFileObjectBlock(CleanupMixin,
 
     @skipUnlessWorksWithRegularFiles
     def test_rU_produces_native(self):
-        if sys.version_info > (3, 11):
-            self.skipTest("U file mode was removed in 3.11")
         gevent_data = self.__check_native_matches(
             b'line1\nline2\r\nline3\rlastline\n\n',
             'rU',
@@ -241,84 +228,6 @@ class TestFileObjectBlock(CleanupMixin,
         x.close()
         y.close()
 
-    @skipUnlessWorksWithRegularFiles
-    @greentest.ignores_leakcheck
-    def test_name_after_close(self):
-        fileno, path = self._mkstemp('.gevent_test_named_path_after_close')
-
-        # Passing the fileno; the name is the same as the fileno, and
-        # doesn't change when closed.
-        f = self._makeOne(fileno)
-        nf = os.fdopen(fileno)
-        # On Python 2, os.fdopen() produces a name of <fdopen>;
-        # we follow the Python 3 semantics everywhere.
-        nf_name = '<fdopen>' if greentest.PY2 else fileno
-        self.assertEqual(f.name, fileno)
-        self.assertEqual(nf.name, nf_name)
-
-        # A file-like object that has no name; we'll close the
-        # `f` after this because we reuse the fileno, which
-        # gets passed to fcntl and so must still be valid
-        class Nameless(object):
-            def fileno(self):
-                return fileno
-            close = flush = isatty = closed = writable = lambda self: False
-            seekable = readable = lambda self: True
-
-        nameless = self._makeOne(Nameless(), 'rb')
-        with self.assertRaises(AttributeError):
-            getattr(nameless, 'name')
-        nameless.close()
-        with self.assertRaises(AttributeError):
-            getattr(nameless, 'name')
-
-        f.close()
-        try:
-            nf.close()
-        except OSError:
-            # OSError: Py3, IOError: Py2
-            pass
-        self.assertEqual(f.name, fileno)
-        self.assertEqual(nf.name, nf_name)
-
-        def check(arg):
-            f = self._makeOne(arg)
-            self.assertEqual(f.name, path)
-            f.close()
-            # Doesn't change after closed.
-            self.assertEqual(f.name, path)
-
-        # Passing the string
-        check(path)
-
-        # Passing an opened native object
-        with open(path) as nf:
-            check(nf)
-
-        # An io object
-        with io.open(path) as nf:
-            check(nf)
-
-    @skipUnlessWorksWithRegularFiles
-    def test_readinto_serial(self):
-        fileno, path = self._mkstemp('.gevent_test_readinto')
-        os.write(fileno, b'hello world')
-        os.close(fileno)
-
-        buf = bytearray(32)
-        mbuf = memoryview(buf)
-
-        def assertReadInto(byte_count, expected_data):
-            bytes_read = f.readinto(mbuf[:byte_count])
-            self.assertEqual(bytes_read, len(expected_data))
-            self.assertEqual(buf[:bytes_read], expected_data)
-
-        with self._makeOne(path, 'rb') as f:
-            assertReadInto(2, b'he')
-            assertReadInto(1, b'l')
-            assertReadInto(32, b'lo world')
-            assertReadInto(32, b'')
-
 
 class ConcurrentFileObjectMixin(object):
     # Additional tests for fileobjects that cooperate
@@ -326,7 +235,7 @@ class ConcurrentFileObjectMixin(object):
 
     def test_read1_binary_present(self):
         # Issue #840
-        r, w = self._pipe()
+        r, w = os.pipe()
         reader = self._makeOne(r, 'rb')
         self._close_on_teardown(reader)
         writer = self._makeOne(w, 'w')
@@ -335,7 +244,7 @@ class ConcurrentFileObjectMixin(object):
 
     def test_read1_text_not_present(self):
         # Only defined for binary.
-        r, w = self._pipe()
+        r, w = os.pipe()
         reader = self._makeOne(r, 'rt')
         self._close_on_teardown(reader)
         self.addCleanup(os.close, w)
@@ -344,15 +253,15 @@ class ConcurrentFileObjectMixin(object):
     def test_read1_default(self):
         # If just 'r' is given, whether it has one or not
         # depends on if we're Python 2 or 3.
-        r, w = self._pipe()
+        r, w = os.pipe()
         self.addCleanup(os.close, w)
         reader = self._makeOne(r)
         self._close_on_teardown(reader)
-        self.assertFalse(hasattr(reader, 'read1'))
+        self.assertEqual(PY2, hasattr(reader, 'read1'))
 
     def test_bufsize_0(self):
         # Issue #840
-        r, w = self._pipe()
+        r, w = os.pipe()
         x = self._makeOne(r, 'rb', bufsize=0)
         y = self._makeOne(w, 'wb', bufsize=0)
         self._close_on_teardown(x)
@@ -367,51 +276,23 @@ class ConcurrentFileObjectMixin(object):
 
     def test_newlines(self):
         import warnings
-        r, w = self._pipe()
+        r, w = os.pipe()
         lines = [b'line1\n', b'line2\r', b'line3\r\n', b'line4\r\nline5', b'\nline6']
         g = gevent.spawn(Writer, self._makeOne(w, 'wb'), lines)
 
         try:
             with warnings.catch_warnings():
-                if sys.version_info > (3, 11):
-                    # U is removed in Python 3.11
-                    mode = 'r'
-                    self.skipTest("U file mode was removed in 3.11")
-                else:
-                    # U is deprecated in Python 3, shows up on FileObjectThread
-                    warnings.simplefilter('ignore', DeprecationWarning)
-                    mode = 'rU'
-                fobj = self._makeOne(r, mode)
+                warnings.simplefilter('ignore', DeprecationWarning)
+                # U is deprecated in Python 3, shows up on FileObjectThread
+                fobj = self._makeOne(r, 'rU')
             result = fobj.read()
             fobj.close()
             self.assertEqual('line1\nline2\nline3\nline4\nline5\nline6', result)
         finally:
             g.kill()
 
-    def test_readinto(self):
-        # verify that .readinto() is cooperative.
-        # if .readinto() is not cooperative spawned greenlet will not be able
-        # to run and call to .readinto() will block forever.
-        r, w = self._pipe()
-        rf = self._close_on_teardown(self._makeOne(r, 'rb'))
-        wf = self._close_on_teardown(self._makeOne(w, 'wb'))
-        g = gevent.spawn(Writer, wf, [b'hello'])
 
-        try:
-            buf1 = bytearray(32)
-            buf2 = bytearray(32)
-
-            n1 = rf.readinto(buf1)
-            n2 = rf.readinto(buf2)
-
-            self.assertEqual(n1, 5)
-            self.assertEqual(buf1[:n1], b'hello')
-            self.assertEqual(n2, 0)
-        finally:
-            g.kill()
-
-
-class TestFileObjectThread(ConcurrentFileObjectMixin, # pylint:disable=too-many-ancestors
+class TestFileObjectThread(ConcurrentFileObjectMixin,
                            TestFileObjectBlock):
 
     def _getTargetClass(self):
@@ -444,7 +325,7 @@ class TestFileObjectThread(ConcurrentFileObjectMixin, # pylint:disable=too-many-
     hasattr(fileobject, 'FileObjectPosix'),
     "Needs FileObjectPosix"
 )
-class TestFileObjectPosix(ConcurrentFileObjectMixin, # pylint:disable=too-many-ancestors
+class TestFileObjectPosix(ConcurrentFileObjectMixin,
                           TestFileObjectBlock):
 
     if sysinfo.LIBUV and sysinfo.LINUX:
@@ -460,7 +341,10 @@ class TestFileObjectPosix(ConcurrentFileObjectMixin, # pylint:disable=too-many-a
         # https://github.com/gevent/gevent/issues/1323
 
         # Get a non-seekable file descriptor
-        r, _w = self._pipe()
+        r, w = os.pipe()
+
+        self.addCleanup(close_fd_quietly, r)
+        self.addCleanup(close_fd_quietly, w)
 
         with self.assertRaises(OSError) as ctx:
             os.lseek(r, 0, os.SEEK_SET)
@@ -479,7 +363,7 @@ class TestFileObjectPosix(ConcurrentFileObjectMixin, # pylint:disable=too-many-a
         self.assertEqual(io_ex.args, os_ex.args)
         self.assertEqual(str(io_ex), str(os_ex))
 
-class TestTextMode(CleanupMixin, unittest.TestCase):
+class TestTextMode(unittest.TestCase):
 
     def test_default_mode_writes_linesep(self):
         # See https://github.com/gevent/gevent/issues/1282
@@ -488,7 +372,9 @@ class TestTextMode(CleanupMixin, unittest.TestCase):
         # First, make sure we initialize gevent
         gevent.get_hub()
 
-        fileno, path = self._mkstemp('.gevent.test__fileobject.test_default')
+        fileno, path = tempfile.mkstemp('.gevent.test__fileobject.test_default')
+        self.addCleanup(os.remove, path)
+
         os.close(fileno)
 
         with open(path, "w") as f:
@@ -499,13 +385,10 @@ class TestTextMode(CleanupMixin, unittest.TestCase):
 
         self.assertEqual(data, os.linesep.encode('ascii'))
 
-class TestOpenDescriptor(CleanupMixin, greentest.TestCase):
-
-    def _getTargetClass(self):
-        return OpenDescriptor
+class TestOpenDescriptor(greentest.TestCase):
 
     def _makeOne(self, *args, **kwargs):
-        return self._getTargetClass()(*args, **kwargs)
+        return OpenDescriptor(*args, **kwargs)
 
     def _check(self, regex, kind, *args, **kwargs):
         with self.assertRaisesRegex(kind, regex):
@@ -528,34 +411,13 @@ class TestOpenDescriptor(CleanupMixin, greentest.TestCase):
         vase('take a newline', mode='rb', newline='\n'),
     )
 
-    def test_atomicwrite_fd(self):
-        from gevent._fileobjectcommon import WriteallMixin
-        # It basically only does something when buffering is otherwise disabled
-        fileno, _w = self._pipe()
-        desc = self._makeOne(fileno, 'wb',
-                             buffering=0,
-                             closefd=False,
-                             atomic_write=True)
-        self.assertTrue(desc.atomic_write)
-
-        fobj = desc.opened()
-        self.assertIsInstance(fobj, WriteallMixin)
-        os.close(fileno)
-
 def pop():
     for regex, kind, kwargs in TestOpenDescriptor.CASES:
         setattr(
-            TestOpenDescriptor, 'test_' + regex.replace(' ', '_'),
+            TestOpenDescriptor, 'test_' + regex,
             lambda self, _re=regex, _kind=kind, _kw=kwargs: self._check(_re, _kind, 1, **_kw)
         )
 pop()
-
-@unittest.skipIf(GreenOpenDescriptor is None, "No support for non-blocking IO")
-class TestGreenOpenDescripton(TestOpenDescriptor):
-    def _getTargetClass(self):
-        return GreenOpenDescriptor
-
-
 
 
 if __name__ == '__main__':

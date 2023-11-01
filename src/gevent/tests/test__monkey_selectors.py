@@ -17,6 +17,9 @@ from gevent.tests.test__selectors import SelectorTestMixin
 
 class TestSelectors(SelectorTestMixin, greentest.TestCase):
 
+    @greentest.skipOnPy2(
+        'selectors2 backport does not use _select'
+    )
     @greentest.skipOnWindows(
         "SelectSelector._select is a normal function on Windows"
     )
@@ -66,7 +69,7 @@ class TestSelectors(SelectorTestMixin, greentest.TestCase):
         else:
             SelKind = SelKindName
             SelKindName = SelKind.__name__
-        m = _make_test(SelKindName, SelKind) # pylint:disable=too-many-function-args
+        m = _make_test(SelKindName, SelKind)
         locals()[m.__name__] = m
 
     del SelKind

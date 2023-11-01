@@ -70,10 +70,10 @@ class TestMonkey(SubscriberCleanupMixin, unittest.TestCase):
 
     def test_saved(self):
         self.assertTrue(monkey.saved)
-        for modname, objects in monkey.saved.items():
+        for modname in monkey.saved:
             self.assertTrue(monkey.is_module_patched(modname))
 
-            for objname in objects:
+            for objname in monkey.saved[modname]:
                 self.assertTrue(monkey.is_object_patched(modname, objname))
 
     def test_patch_subprocess_twice(self):

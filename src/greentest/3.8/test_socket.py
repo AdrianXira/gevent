@@ -50,8 +50,6 @@ except ImportError:
 def get_cid():
     if fcntl is None:
         return None
-    if not hasattr(socket, 'IOCTL_VM_SOCKETS_GET_LOCAL_CID'):
-        return None
     try:
         with open("/dev/vsock", "rb") as f:
             r = fcntl.ioctl(f, socket.IOCTL_VM_SOCKETS_GET_LOCAL_CID, "    ")
@@ -187,7 +185,7 @@ class SocketCANTest(unittest.TestCase):
     the following commands:
     # modprobe vcan
     # ip link add dev vcan0 type vcan
-    # ip link set up vcan0
+    # ifconfig vcan0 up
     """
     interface = 'vcan0'
     bufsize = 128
@@ -1954,6 +1952,7 @@ class CANTest(ThreadedCANSocketTest):
         cf, addr = self.s.recvfrom(self.bufsize)
         self.assertEqual(self.cf, cf)
         self.assertEqual(addr[0], self.interface)
+        self.assertEqual(addr[1], socket.AF_CAN)
 
     def _testSendFrame(self):
         self.cf = self.build_can_frame(0x00, b'\x01\x02\x03\x04\x05')

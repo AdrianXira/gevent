@@ -50,9 +50,6 @@ class _MonitorEntry(object):
     def __eq__(self, other):
         return self.function == other.function and self.period == other.period
 
-    def __hash__(self):
-        return hash((self.function, self.period))
-
     def __repr__(self):
         return repr((self.function, self.period, self.last_run_time))
 
@@ -233,7 +230,7 @@ class PeriodicMonitoringThread(object):
         if not did_block:
             return
 
-        active_greenlet = did_block[1] # pylint:disable=unsubscriptable-object
+        active_greenlet = did_block[1]
         report = self._greenlet_tracer.did_block_hub_report(
             hub, active_greenlet,
             dict(greenlet_stacks=False, current_thread_ident=self.monitor_thread_ident))

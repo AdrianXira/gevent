@@ -66,12 +66,9 @@ PY36 = None
 PY37 = None
 PY38 = None
 PY39 = None
-PY310 = None
-PY311 = None
-PY312 = None
 
 NON_APPLICABLE_SUFFIXES = ()
-if sys.version_info[0] == 3:
+if sys.version_info[0] >= 3:
     # Python 3
     NON_APPLICABLE_SUFFIXES += ('2', '279')
     PY2 = False
@@ -86,12 +83,6 @@ if sys.version_info[0] == 3:
         PY38 = True
     if sys.version_info[1] >= 9:
         PY39 = True
-    if sys.version_info[1] >= 10:
-        PY310 = True
-    if sys.version_info[1] >= 11:
-        PY311 = True
-    if sys.version_info[1] >= 12:
-        PY312 = True
 
 elif sys.version_info[0] == 2:
     # Any python 2
@@ -102,9 +93,6 @@ elif sys.version_info[0] == 2:
             or (sys.version_info[1] == 7 and sys.version_info[2] < 9)):
         # Python 2, < 2.7.9
         NON_APPLICABLE_SUFFIXES += ('279',)
-else: # pragma: no cover
-    # Python 4?
-    raise ImportError('Unsupported major python version')
 
 PYPY3 = PYPY and PY3
 
@@ -124,15 +112,11 @@ if WIN:
 else:
     SHARED_OBJECT_EXTENSION = ".so"
 
-# We define GitHub actions to be similar to travis
-RUNNING_ON_GITHUB_ACTIONS = os.environ.get('GITHUB_ACTIONS')
-RUNNING_ON_TRAVIS = os.environ.get('TRAVIS') or RUNNING_ON_GITHUB_ACTIONS
+
+RUNNING_ON_TRAVIS = os.environ.get('TRAVIS')
 RUNNING_ON_APPVEYOR = os.environ.get('APPVEYOR')
 RUNNING_ON_CI = RUNNING_ON_TRAVIS or RUNNING_ON_APPVEYOR
 RUNNING_ON_MANYLINUX = os.environ.get('GEVENT_MANYLINUX')
-# I'm not sure how to reliably auto-detect this, without
-# importing platform, something we don't want to do.
-RUNNING_ON_MUSLLINUX = 'musllinux' in os.environ.get('GEVENT_MANYLINUX_NAME', '')
 
 if RUNNING_ON_APPVEYOR:
     # We can't exec corecext on appveyor if we haven't run setup.py in
@@ -173,27 +157,21 @@ RESOLVER_NOT_SYSTEM = RESOLVER_ARES or RESOLVER_DNSPYTHON
 def get_python_version():
     """
     Return a string of the simple python version,
-    such as '3.8.0b4'. Handles alpha, beta, release candidate, and final releases.
+    such as '3.8.0b4'. Handles alpha and beta and final releases.
     """
     version = '%s.%s.%s' % sys.version_info[:3]
     if sys.version_info[3] == 'alpha':
         version += 'a%s' % sys.version_info[4]
     elif sys.version_info[3] == 'beta':
         version += 'b%s' % sys.version_info[4]
-    elif sys.version_info[3] == 'candidate':
-        version += 'rc%s' % sys.version_info[4]
 
     return version
-
-# XXX: In Python 3.10, distutils is deprecated and slated for removal in
-# 3.12. The suggestion is to use setuptools, but it only has LooseVersion
-# in an internal package and suggests using the new dependency of 'packaging'
 
 def libev_supports_linux_aio():
     # libev requires kernel 4.19 or above to be able to support
     # linux AIO. It can still be compiled in, but will fail to create
     # the loop at runtime.
-    from distutils.version import LooseVersion # pylint:disable=deprecated-module
+    from distutils.version import LooseVersion
     from platform import system
     from platform import release
 
@@ -204,17 +182,8 @@ def libev_supports_linux_iouring():
     # It fails with the kernel in fedora rawhide (4.19.76) but
     # works (doesn't fail catastrophically when asked to create one)
     # with kernel 5.3.0 (Ubuntu Bionic)
-    from distutils.version import LooseVersion # pylint:disable=deprecated-module
+    from distutils.version import LooseVersion
     from platform import system
     from platform import release
 
     return system() == 'Linux' and LooseVersion(release() or '0') >= LooseVersion('5.3')
-
-def resolver_dnspython_available():
-    # Try hard not to leave around junk we don't have to.
-    from importlib import metadata
-    try:
-        metadata.distribution('dnspython')
-    except metadata.PackageNotFoundError:
-        return False
-    return True

@@ -30,7 +30,7 @@ http://git.savannah.gnu.org/gitweb/?p=config.git;a=tree )
 Updating c-ares
 ===============
 
-- Download and clean up the c-ares Makefile.in[c] and configure script to empty out the
+- Download and clean up the c-ares Makefile.in[c] to empty out the
   MANPAGES variables so that we don't have to ship those in the sdist::
 
     export CARES_VER=1.15.0
@@ -40,28 +40,18 @@ Updating c-ares
     tar -xf c-ares-$CARES_VER.tar.gz
     rm -rf c-ares c-ares-$CARES_VER.tar.gz
     mv c-ares-$CARES_VER c-ares
-    cp c-ares/include/ares_build.h c-ares/include/ares_build.h.dist
-    rm -rf c-ares/docs
+    cp c-ares/ares_build.h c-ares/ares_build.h.dist
+    rm -f c-ares/*.3 c-ares/*.1
     rm -rf c-ares/test
+    rm -rf c-ares/vc
     rm -f c-ares/maketgz
     rm -f c-ares/CMakeLists.txt
-    rm -f c-ares/RELEASE-PROCEDURE.md c-ares/CONTRIBUTING.md c-ares/SECURITY.md
+    rm -f c-ares/RELEASE-PROCEDURE.md
     rm -f c-ares/*.cmake c-ares/*.cmake.in
-    rm -f c-ares/buildconf.bat
     git apply cares-make.patch
 
-  At this point there might be new files in c-ares that need added to
+  At this point there might be new files in libuv that need added to
   git, evaluate them and add them.
-
-  Note that the patch may not apply cleanly. If not, commit the
-  changes before the patch. Then manually apply them by editing the
-  three files to remove the references to ``docs`` and ``test``; this
-  is easiest to do by reading the existing patch file and searching
-  for the relevant lines in the target files. Once this is working
-  correctly, create the new patch using ``git diff -p --minimal -w``
-  (note that you cannot directly redirect the output of this into
-  ``cares-make.patch``, or you'll get the diff of the patch itself in
-  the diff!).
 
 - Follow the same 'config.guess' and 'config.sub' steps as libev.
 
@@ -81,8 +71,6 @@ Updating libuv
     rm -rf libuv
     mv libuv-$LIBUV_VER libuv
     rm -rf libuv/.github
-    rm -rf libuv/.readthedocs.yaml
-    rm -rf libuv/LINKS.md
     rm -rf libuv/docs
     rm -rf libuv/samples
     rm -rf libuv/test/*.[ch] libuv/test/test.gyp # must leave the fixtures/ dir

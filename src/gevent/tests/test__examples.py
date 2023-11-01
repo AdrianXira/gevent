@@ -37,7 +37,7 @@ def _find_files_to_ignore():
     return result
 
 default_time_range = (2, 10)
-time_ranges = { # what is this even supposed to mean? pylint:disable=consider-using-namedtuple-or-dataclass
+time_ranges = {
     'concurrent_download.py': (0, 30),
     'processes.py': (0, default_time_range[-1])
 }
@@ -49,7 +49,6 @@ class _AbstractTestMixin(util.ExampleMixin):
     def _check_resources(self):
         from gevent.testing import resources
 
-        # pylint:disable=unspecified-encoding
         with open(os.path.join(self.cwd, self.example), 'r') as f:
             contents = f.read()
 

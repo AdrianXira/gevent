@@ -2,8 +2,6 @@
  Table Of Contents
 ===================
 
-.. tip:: To jump directly to the full API reference, see :doc:`api/index`.
-
 Introduction and Basics
 =======================
 
@@ -11,8 +9,8 @@ Introduction and Basics
    :maxdepth: 2
 
    install
-   changelog
    intro
+   whatsnew_1_5
    api/gevent
    api/gevent.greenlet
    servers
@@ -20,13 +18,13 @@ Introduction and Basics
    monitoring
    loop_impls
    configuration
+   changelog
 
-
-Coding With gevent
-==================
+API Details
+===========
 
 .. toctree::
-   :maxdepth: 3
+   :maxdepth: 2
 
    api/index
 

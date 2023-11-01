@@ -23,14 +23,10 @@ THIS_DIR = os.path.dirname(__file__)
 
 PYPY = hasattr(sys, 'pypy_version_info')
 WIN = sys.platform.startswith('win')
-PY311 = sys.version_info[:2] >= (3, 11)
-PY312 = sys.version_info[:2] >= (3, 12)
-
 
 RUNNING_ON_TRAVIS = os.environ.get('TRAVIS')
 RUNNING_ON_APPVEYOR = os.environ.get('APPVEYOR')
-RUNNING_ON_GITHUB_ACTIONS = os.environ.get('GITHUB_ACTIONS')
-RUNNING_ON_CI = RUNNING_ON_TRAVIS or RUNNING_ON_APPVEYOR or RUNNING_ON_GITHUB_ACTIONS
+RUNNING_ON_CI = RUNNING_ON_TRAVIS or RUNNING_ON_APPVEYOR
 RUNNING_FROM_CHECKOUT = os.path.isdir(os.path.join(THIS_DIR, ".git"))
 
 
@@ -81,7 +77,7 @@ def glob_many(*globs):
 # They should all begin with ``GEVENTSETUP_``
 
 
-def bool_from_environ(key):
+def _bool_from_environ(key):
     value = os.environ.get(key)
     if not value:
         return
@@ -101,9 +97,9 @@ def _check_embed(key, defkey, path=None, warn=False):
     those don't exist, then check for the existence of *path* and return
     that (if path is given)
     """
-    value = bool_from_environ(key)
+    value = _bool_from_environ(key)
     if value is None:
-        value = bool_from_environ(defkey)
+        value = _bool_from_environ(defkey)
     if value is not None:
         if warn:
             print("Warning: gevent setup: legacy environment key %s or %s found"
@@ -236,15 +232,6 @@ def cythonize1(ext):
         # This is for generated include files; see below.
         '.',
     ]
-    if PY311:
-        # The "fast" code is Cython for manipulating
-        # exceptions is, unfortunately, broken, at least in 3.0.2.
-        # The implementation of __Pyx__GetException() doesn't properly set
-        # tstate->current_exception when it normalizes exceptions,
-        # causing assertion errors.
-        # This definitely seems to be a problem on 3.12, and MAY
-        # be a problem on 3.11 (#1985)
-        ext.define_macros.append(('CYTHON_FAST_THREAD_STATE', '0'))
     try:
         new_ext = cythonize(
             [ext],
@@ -256,23 +243,6 @@ def cythonize1(ext):
                 'infer_types': True,
                 'nonecheck': False,
             },
-            # XXX: Cython developers say: "Please use C macros instead
-            # of Pyrex defines. Taking this kind of decision based on
-            # the runtime environment of the build is wrong, it needs
-            # to be taken at C compile time."
-            #
-            # They also say, "The 'IF' statement is deprecated and
-            # will be removed in a future Cython version. Consider
-            # using runtime conditions or C macros instead. See
-            # https://github.com/cython/cython/issues/4310"
-            #
-            # And: " The 'DEF' statement is deprecated and will be
-            # removed in a future Cython version. Consider using
-            # global variables, constants, and in-place literals
-            # instead."
-            #compile_time_env={
-            #
-            #},
             # The common_utility_include_dir (not well documented)
             # causes Cython to emit separate files for much of the
             # static support code. Each of the modules then includes

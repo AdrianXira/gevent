@@ -14,7 +14,6 @@ from gevent._ffi import GEVENT_DEBUG_LEVEL
 from gevent._ffi import TRACE
 from gevent._ffi.callback import callback
 from gevent._compat import PYPY
-from gevent.exceptions import HubDestroyed
 
 from gevent import getswitchinterval
 
@@ -178,20 +177,20 @@ class AbstractCallbacks(object):
             # Keep it around so we can close it later.
             the_watcher.loop._keepaliveset.add(the_watcher)
             return -1
+        else:
+            if (the_watcher.loop is not None
+                    and the_watcher in the_watcher.loop._keepaliveset
+                    and the_watcher._watcher is orig_ffi_watcher):
+                # It didn't stop itself, *and* it didn't stop itself, reset
+                # its watcher, and start itself again. libuv's io watchers
+                # multiplex and may do this.
 
-        if (the_watcher.loop is not None
-                and the_watcher in the_watcher.loop._keepaliveset
-                and the_watcher._watcher is orig_ffi_watcher):
-            # It didn't stop itself, *and* it didn't stop itself, reset
-            # its watcher, and start itself again. libuv's io watchers
-            # multiplex and may do this.
-
-            # The normal, expected scenario when we find the watcher still
-            # in the keepaliveset is that it is still active at the event loop
-            # level, so we don't expect that python_stop gets called.
-            #_dbg("The watcher has not stopped itself, possibly still active", the_watcher)
-            return 1
-        return 2 # it stopped itself
+                # The normal, expected scenario when we find the watcher still
+                # in the keepaliveset is that it is still active at the event loop
+                # level, so we don't expect that python_stop gets called.
+                #_dbg("The watcher has not stopped itself, possibly still active", the_watcher)
+                return 1
+            return 2 # it stopped itself
 
     def python_handle_error(self, handle, _revents):
         _dbg("Handling error for handle", handle)
@@ -302,7 +301,7 @@ class AbstractCallbacks(object):
         loop._run_callbacks()
 
     def check_callback_onerror(self, t, v, tb):
-        watcher_ptr = self._find_watcher_ptr_in_traceback(tb)
+        watcher_ptr = tb.tb_frame.f_locals['watcher_ptr'] if tb is not None else None
         if watcher_ptr:
             loop = self._find_loop_from_c_watcher(watcher_ptr)
         if loop is not None:
@@ -315,8 +314,6 @@ class AbstractCallbacks(object):
     def _find_loop_from_c_watcher(self, watcher_ptr):
         raise NotImplementedError()
 
-    def _find_watcher_ptr_in_traceback(self, tb):
-        return tb.tb_frame.f_locals['watcher_ptr'] if tb is not None else None
 
 
 def assign_standard_callbacks(ffi, lib, callbacks_class, extras=()): # pylint:disable=unused-argument
@@ -334,7 +331,7 @@ def assign_standard_callbacks(ffi, lib, callbacks_class, extras=()): # pylint:di
     # callbacks keeps these cdata objects alive at the python level
     callbacks = callbacks_class(ffi)
     extras = [extra if len(extra) == 2 else (extra, None) for extra in extras]
-    extras = tuple((getattr(callbacks, name), error) for name, error in extras)
+    extras = tuple([(getattr(callbacks, name), error) for name, error in extras])
     for (func, error_func) in (
             (callbacks.python_callback, None),
             (callbacks.python_handle_error, None),
@@ -394,7 +391,6 @@ class AbstractLoop(object):
     _default = None
 
     _keepaliveset = _DiscardedSet()
-    _threadsafe_async = None
 
     def __init__(self, ffi, lib, watchers, flags=None, default=None):
         self._ffi = ffi
@@ -407,6 +403,7 @@ class AbstractLoop(object):
         # Stores python watcher objects while they are started
         self._keepaliveset = set()
         self._init_loop_and_aux_watchers(flags, default)
+
 
     def _init_loop_and_aux_watchers(self, flags=None, default=None):
         self._ptr = self._init_loop(flags, default)
@@ -438,10 +435,6 @@ class AbstractLoop(object):
         self._timer0.data = self._handle_to_self
         self._init_callback_timer()
 
-        self._threadsafe_async = self.async_(ref=False)
-        # No need to do anything with this on ``fork()``, both libev and libuv
-        # take care of creating a new pipe in their respective ``loop_fork()`` methods.
-        self._threadsafe_async.start(lambda: None)
         # TODO: We may be able to do something nicer and use the existing python_callback
         # combined with onerror and the class check/timer/prepare to simplify things
         # and unify our handling
@@ -552,9 +545,7 @@ class AbstractLoop(object):
             self.starting_timer_may_update_loop_time = False
 
     def _stop_aux_watchers(self):
-        if self._threadsafe_async is not None:
-            self._threadsafe_async.close()
-            self._threadsafe_async = None
+        raise NotImplementedError()
 
     def destroy(self):
         ptr = self.ptr
@@ -610,11 +601,6 @@ class AbstractLoop(object):
         self.handle_error(None, SystemError, SystemError(message), None)
 
     def handle_error(self, context, type, value, tb):
-        if type is HubDestroyed:
-            self._callbacks.clear()
-            self.break_()
-            return
-
         handle_error = None
         error_handler = self.error_handler
         if error_handler is not None:
@@ -747,13 +733,9 @@ class AbstractLoop(object):
         # _run_callbacks), this could happen almost immediately,
         # without the loop cycling.
         cb = callback(func, args)
-        self._callbacks.append(cb) # Relying on the GIL for this to be threadsafe
-        self._setup_for_run_callback() # XXX: This may not be threadsafe.
-        return cb
+        self._callbacks.append(cb)
+        self._setup_for_run_callback()
 
-    def run_callback_threadsafe(self, func, *args):
-        cb = self.run_callback(func, *args)
-        self._threadsafe_async.send()
         return cb
 
     def _format(self):
@@ -781,7 +763,6 @@ class AbstractLoop(object):
             msg += ' fileno=' + repr(fileno)
         #if sigfd is not None and sigfd != -1:
         #    msg += ' sigfd=' + repr(sigfd)
-        msg += ' callbacks=' + str(len(self._callbacks))
         return msg
 
     def fileno(self):

@@ -47,6 +47,10 @@ class _Callbacks(AbstractCallbacks):
 
         the_watcher.loop._queue_callback(watcher_ptr, revents)
 
+    def __loop_from_loop_ptr(self, loop_ptr):
+        loop_handle = loop_ptr.data
+        return self.from_handle(loop_handle)
+
 
 _callbacks = assign_standard_callbacks(
     ffi, libuv, _Callbacks,
@@ -112,11 +116,11 @@ class loop(AbstractLoop):
 
     def __init__(self, flags=None, default=None):
         AbstractLoop.__init__(self, ffi, libuv, _watchers, flags, default)
+        self.__loop_pid = os.getpid()
         self._child_watchers = defaultdict(list)
-        self._io_watchers = {}
+        self._io_watchers = dict()
         self._fork_watchers = set()
         self._pid = os.getpid()
-        # pylint:disable-next=superfluous-parens
         self._default = (self._ptr == libuv.uv_default_loop())
         self._queued_callbacks = []
 
@@ -330,7 +334,6 @@ class loop(AbstractLoop):
 
 
     def _stop_aux_watchers(self):
-        super(loop, self)._stop_aux_watchers()
         assert self._prepare
         assert self._check
         assert self._signal_idle
@@ -453,8 +456,7 @@ class loop(AbstractLoop):
         pass
 
     def break_(self, how=None):
-        if self.ptr:
-            libuv.uv_stop(self.ptr)
+        libuv.uv_stop(self.ptr)
 
     def reinit(self):
         # TODO: How to implement? We probably have to simply

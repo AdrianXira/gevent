@@ -30,14 +30,12 @@
 #include "uv.h"
 #include "internal.h"
 
-/* clang-format off */
 #include <winsock2.h>
 #include <winperf.h>
 #include <iphlpapi.h>
 #include <psapi.h>
 #include <tlhelp32.h>
 #include <windows.h>
-/* clang-format on */
 #include <userenv.h>
 #include <math.h>
 
@@ -69,8 +67,8 @@ extern BOOLEAN NTAPI SystemFunction036(PVOID Buffer, ULONG BufferLength);
 static char *process_title;
 static CRITICAL_SECTION process_title_lock;
 
-/* Frequency of the high-resolution clock. */
-static uint64_t hrtime_frequency_ = 0;
+/* Interval (in seconds) of the high-resolution clock. */
+static double hrtime_interval_ = 0;
 
 
 /*
@@ -86,9 +84,9 @@ void uv__util_init(void) {
    * and precompute its reciprocal.
    */
   if (QueryPerformanceFrequency(&perf_frequency)) {
-    hrtime_frequency_ = perf_frequency.QuadPart;
+    hrtime_interval_ = 1.0 / perf_frequency.QuadPart;
   } else {
-    uv_fatal_error(GetLastError(), "QueryPerformanceFrequency");
+    hrtime_interval_= 0;
   }
 }
 
@@ -492,25 +490,23 @@ uint64_t uv_hrtime(void) {
   return uv__hrtime(UV__NANOSEC);
 }
 
-uint64_t uv__hrtime(unsigned int scale) {
+uint64_t uv__hrtime(double scale) {
   LARGE_INTEGER counter;
-  double scaled_freq;
-  double result;
 
-  assert(hrtime_frequency_ != 0);
-  assert(scale != 0);
-  if (!QueryPerformanceCounter(&counter)) {
-    uv_fatal_error(GetLastError(), "QueryPerformanceCounter");
+  /* If the performance interval is zero, there's no support. */
+  if (hrtime_interval_ == 0) {
+    return 0;
   }
-  assert(counter.QuadPart != 0);
+
+  if (!QueryPerformanceCounter(&counter)) {
+    return 0;
+  }
 
   /* Because we have no guarantee about the order of magnitude of the
    * performance counter interval, integer math could cause this computation
    * to overflow. Therefore we resort to floating point math.
    */
-  scaled_freq = (double) hrtime_frequency_ / scale;
-  result = (double) counter.QuadPart / scaled_freq;
-  return (uint64_t) result;
+  return (uint64_t) ((double) counter.QuadPart * hrtime_interval_ * scale);
 }
 
 
@@ -531,25 +527,103 @@ int uv_resident_set_memory(size_t* rss) {
 
 
 int uv_uptime(double* uptime) {
-  *uptime = GetTickCount64() / 1000.0;
-  return 0;
-}
+  BYTE stack_buffer[4096];
+  BYTE* malloced_buffer = NULL;
+  BYTE* buffer = (BYTE*) stack_buffer;
+  size_t buffer_size = sizeof(stack_buffer);
+  DWORD data_size;
 
+  PERF_DATA_BLOCK* data_block;
+  PERF_OBJECT_TYPE* object_type;
+  PERF_COUNTER_DEFINITION* counter_definition;
 
-unsigned int uv_available_parallelism(void) {
-  SYSTEM_INFO info;
-  unsigned rc;
+  DWORD i;
 
-  /* TODO(bnoordhuis) Use GetLogicalProcessorInformationEx() to support systems
-   * with > 64 CPUs? See https://github.com/libuv/libuv/pull/3458
-   */
-  GetSystemInfo(&info);
+  for (;;) {
+    LONG result;
 
-  rc = info.dwNumberOfProcessors;
-  if (rc < 1)
-    rc = 1;
+    data_size = (DWORD) buffer_size;
+    result = RegQueryValueExW(HKEY_PERFORMANCE_DATA,
+                              L"2",
+                              NULL,
+                              NULL,
+                              buffer,
+                              &data_size);
+    if (result == ERROR_SUCCESS) {
+      break;
+    } else if (result != ERROR_MORE_DATA) {
+      *uptime = 0;
+      return uv_translate_sys_error(result);
+    }
 
-  return rc;
+    buffer_size *= 2;
+    /* Don't let the buffer grow infinitely. */
+    if (buffer_size > 1 << 20) {
+      goto internalError;
+    }
+
+    uv__free(malloced_buffer);
+
+    buffer = malloced_buffer = (BYTE*) uv__malloc(buffer_size);
+    if (malloced_buffer == NULL) {
+      *uptime = 0;
+      return UV_ENOMEM;
+    }
+  }
+
+  if (data_size < sizeof(*data_block))
+    goto internalError;
+
+  data_block = (PERF_DATA_BLOCK*) buffer;
+
+  if (wmemcmp(data_block->Signature, L"PERF", 4) != 0)
+    goto internalError;
+
+  if (data_size < data_block->HeaderLength + sizeof(*object_type))
+    goto internalError;
+
+  object_type = (PERF_OBJECT_TYPE*) (buffer + data_block->HeaderLength);
+
+  if (object_type->NumInstances != PERF_NO_INSTANCES)
+    goto internalError;
+
+  counter_definition = (PERF_COUNTER_DEFINITION*) (buffer +
+      data_block->HeaderLength + object_type->HeaderLength);
+  for (i = 0; i < object_type->NumCounters; i++) {
+    if ((BYTE*) counter_definition + sizeof(*counter_definition) >
+        buffer + data_size) {
+      break;
+    }
+
+    if (counter_definition->CounterNameTitleIndex == 674 &&
+        counter_definition->CounterSize == sizeof(uint64_t)) {
+      if (counter_definition->CounterOffset + sizeof(uint64_t) > data_size ||
+          !(counter_definition->CounterType & PERF_OBJECT_TIMER)) {
+        goto internalError;
+      } else {
+        BYTE* address = (BYTE*) object_type + object_type->DefinitionLength +
+                        counter_definition->CounterOffset;
+        uint64_t value = *((uint64_t*) address);
+        *uptime = floor((double) (object_type->PerfTime.QuadPart - value) /
+                        (double) object_type->PerfFreq.QuadPart);
+        uv__free(malloced_buffer);
+        return 0;
+      }
+    }
+
+    counter_definition = (PERF_COUNTER_DEFINITION*)
+        ((BYTE*) counter_definition + counter_definition->ByteLength);
+  }
+
+  /* If we get here, the uptime value was not found. */
+  uv__free(malloced_buffer);
+  *uptime = 0;
+  return UV_ENOSYS;
+
+ internalError:
+  uv__free(malloced_buffer);
+  *uptime = 0;
+  return UV_EIO;
 }
 
 
@@ -1586,36 +1660,26 @@ int uv_os_unsetenv(const char* name) {
 
 
 int uv_os_gethostname(char* buffer, size_t* size) {
-  WCHAR buf[UV_MAXHOSTNAMESIZE];
+  char buf[UV_MAXHOSTNAMESIZE];
   size_t len;
-  char* utf8_str;
-  int convert_result;
 
   if (buffer == NULL || size == NULL || *size == 0)
     return UV_EINVAL;
 
   uv__once_init(); /* Initialize winsock */
 
-  if (pGetHostNameW == NULL)
-    return UV_ENOSYS;
-
-  if (pGetHostNameW(buf, UV_MAXHOSTNAMESIZE) != 0)
+  if (gethostname(buf, sizeof(buf)) != 0)
     return uv_translate_sys_error(WSAGetLastError());
 
-  convert_result = uv__convert_utf16_to_utf8(buf, -1, &utf8_str);
+  buf[sizeof(buf) - 1] = '\0'; /* Null terminate, just to be safe. */
+  len = strlen(buf);
 
-  if (convert_result != 0)
-    return convert_result;
-
-  len = strlen(utf8_str);
   if (len >= *size) {
     *size = len + 1;
-    uv__free(utf8_str);
     return UV_ENOBUFS;
   }
 
-  memcpy(buffer, utf8_str, len + 1);
-  uv__free(utf8_str);
+  memcpy(buffer, buf, len + 1);
   *size = len;
   return 0;
 }
@@ -1740,9 +1804,7 @@ int uv_os_uname(uv_utsname_t* buffer) {
     pRtlGetVersion(&os_info);
   } else {
     /* Silence GetVersionEx() deprecation warning. */
-    #ifdef _MSC_VER
     #pragma warning(suppress : 4996)
-    #endif
     if (GetVersionExW(&os_info) == 0) {
       r = uv_translate_sys_error(GetLastError());
       goto error;
@@ -1809,7 +1871,7 @@ int uv_os_uname(uv_utsname_t* buffer) {
                "MINGW32_NT-%u.%u",
                (unsigned int) os_info.dwMajorVersion,
                (unsigned int) os_info.dwMinorVersion);
-  assert((size_t)r < sizeof(buffer->sysname));
+  assert(r < sizeof(buffer->sysname));
 #else
   uv__strscpy(buffer->sysname, "Windows_NT", sizeof(buffer->sysname));
 #endif
@@ -1821,7 +1883,7 @@ int uv_os_uname(uv_utsname_t* buffer) {
                (unsigned int) os_info.dwMajorVersion,
                (unsigned int) os_info.dwMinorVersion,
                (unsigned int) os_info.dwBuildNumber);
-  assert((size_t)r < sizeof(buffer->release));
+  assert(r < sizeof(buffer->release));
 
   /* Populate the machine field. */
   GetSystemInfo(&system_info);

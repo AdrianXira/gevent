@@ -23,9 +23,7 @@ omit =
     */gevent/libev/*.so
     */gevent/libuv/*.so
     */gevent/resolver/*.so
-# New in 5.0; required for the GHA coveralls submission.
-# Perhaps this obsoletes the source section in [paths]?
-relative_files = True
+
 
 [report]
 # Coverage is run on Linux under cPython 2/3 and pypy
@@ -50,15 +48,15 @@ omit =
     # Third-party vendored code
     src/gevent/_tblib.py
 
-# [paths]
-# # Combine source and paths from the Travis CI installs so they all get
-# # collapsed during combining. Otherwise, coveralls.io reports
-# # many different files (/lib/pythonX.Y/site-packages/gevent/...) and we don't
-# # get a good aggregate number.
-# source =
-#      src/
-#      */lib/*/site-packages/
-#      */pypy*/site-packages/
+[paths]
+# Combine source and paths from the Travis CI installs so they all get
+# collapsed during combining. Otherwise, coveralls.io reports
+# many different files (/lib/pythonX.Y/site-packages/gevent/...) and we don't
+# get a good aggregate number.
+source =
+     src/
+     */lib/*/site-packages/
+     */pypy*/site-packages/
 
 # Local Variables:
 # mode: conf

@@ -162,6 +162,7 @@ def _format_thread_info(lines, thread_stacks, limit, current_thread_ident):
     import threading
 
     threads = {th.ident: th for th in threading.enumerate()}
+
     lines.append('*' * 80)
     lines.append('* Threads')
 
@@ -371,20 +372,10 @@ class GreenletTree(object):
     def __str__(self):
         return self.format(False)
 
-    # Prior to greenlet 3.0rc1, getting tracebacks of inactive
-    # greenlets could crash on Python 3.12. So we  added a version-based
-    # setting here to disable it. That's now fixed, but leave the
-    # hook just in case.
-    _SUPPORTS_TRACEBACK = True
-
-    @classmethod
-    def __render_tb(cls, tree, label, frame, limit):
+    @staticmethod
+    def __render_tb(tree, label, frame, limit):
         tree.child_data(label)
-
-        if cls._SUPPORTS_TRACEBACK:
-            tb = ''.join(traceback.format_stack(frame, limit))
-        else:
-            tb = ''
+        tb = ''.join(traceback.format_stack(frame, limit))
         tree.child_multidata(tb)
 
     @staticmethod

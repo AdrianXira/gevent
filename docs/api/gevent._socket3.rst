@@ -4,4 +4,3 @@
 
 .. automodule:: gevent._socket3
     :members:
-    :inherited-members:

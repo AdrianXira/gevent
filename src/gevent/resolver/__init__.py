@@ -25,6 +25,7 @@ from gevent._compat import string_types
 from gevent._compat import text_type
 from gevent._compat import hostname_types
 from gevent._compat import integer_types
+from gevent._compat import PY3
 from gevent._compat import PYPY
 from gevent._compat import MAC
 
@@ -97,7 +98,7 @@ def _resolve_special(hostname, family):
 
 class AbstractResolver(object):
 
-    HOSTNAME_ENCODING = 'idna'
+    HOSTNAME_ENCODING = 'idna' if PY3 else 'ascii'
 
     _LOCAL_HOSTNAMES = (
         b'localhost',
@@ -134,15 +135,6 @@ class AbstractResolver(object):
         and k not in ('SOCK_CLOEXEC', 'SOCK_MAX_SIZE')
     }
 
-    def close(self):
-        """
-        Release resources held by this object.
-
-        Subclasses that define resources should override.
-
-        .. versionadded:: 22.10.1
-        """
-
     @staticmethod
     def fixup_gaierror(func):
         import functools
@@ -172,7 +164,7 @@ class AbstractResolver(object):
         # behaviour with special names. Notably, ``gethostbyname`` will handle
         # both "<broadcast>" and "255.255.255.255", while ``gethostbyname_ex`` refuses to
         # handle those; they result in different errors, too. So we can't
-        # pass those through.
+        # pass those throgh.
         hostname = self._hostname_to_bytes(hostname)
         if hostname in self._LOCAL_AND_BROADCAST_HOSTNAMES:
             return native_gethostbyname(hostname)

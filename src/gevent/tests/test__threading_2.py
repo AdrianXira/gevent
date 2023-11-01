@@ -45,8 +45,6 @@ import weakref
 
 from gevent.tests import lock_tests
 verbose = False
-# pylint:disable=consider-using-with
-
 # A trivial mutable counter.
 
 def skipDueToHang(cls):
@@ -145,13 +143,13 @@ class ThreadTests(unittest.TestCase):
         # The ident still must work for the main thread and dummy threads,
         # as must the repr and str.
 
-        t = threading.current_thread()
+        t = threading.currentThread()
         self.assertFalse(t.ident is None)
         str(t)
         repr(t)
 
         def f():
-            t = threading.current_thread()
+            t = threading.currentThread()
             ident.append(t.ident)
             str(t)
             repr(t)

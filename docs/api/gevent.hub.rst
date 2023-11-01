@@ -1,6 +1,6 @@
-=============================================
- ``gevent.hub`` - The Event Loop and the Hub
-=============================================
+============================
+ The Event Loop and the Hub
+============================
 
 .. module:: gevent.hub
 
@@ -30,7 +30,6 @@ All implementations of the loop provide a common minimum interface.
 
 .. autointerface:: gevent._interfaces.ILoop
 .. autointerface:: gevent._interfaces.IWatcher
-.. autointerface:: gevent._interfaces.ICallback
 
 Utilities
 =========

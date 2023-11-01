@@ -13,7 +13,6 @@ over a queue means repeatedly calling :meth:`get <Queue.get>` until
 :meth:`get <Queue.get>` returns ``StopIteration`` (specifically that
 class, not an instance or subclass).
 
-    >>> import gevent.queue
     >>> queue = gevent.queue.Queue()
     >>> queue.put(1)
     >>> queue.put(2)
@@ -228,7 +227,7 @@ class Queue(object):
         """
         return True
 
-    def __nonzero__(self): # pylint:disable=bad-dunder-name
+    def __nonzero__(self):
         # Py2.
         # For Cython; __bool__ becomes a special method that we can't
         # get by name.

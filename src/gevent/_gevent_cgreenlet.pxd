@@ -1,8 +1,6 @@
 # cython: auto_pickle=False
 
 cimport cython
-from cpython.ref cimport Py_DECREF
-
 from gevent._gevent_c_ident cimport IdentRegistry
 from gevent._gevent_c_hub_local cimport get_hub_noargs as get_hub
 from gevent._gevent_c_waiter cimport Waiter
@@ -23,14 +21,12 @@ cdef extern from "greenlet/greenlet.h":
         # properly handle the case that it can be NULL. So instead we inline a getparent
         # function that does the same thing as the green_getparent accessor but without
         # going through the overhead of generic attribute lookup.
-        #cdef void* parent
-        pass
+        cdef void* parent
 
     # These are actually macros and so must be included
     # (defined) in each .pxd, as are the two functions
     # that call them.
     greenlet PyGreenlet_GetCurrent()
-    void* PyGreenlet_GetParent(greenlet)
     void PyGreenlet_Import()
 
 @cython.final
@@ -40,26 +36,13 @@ cdef inline greenlet getcurrent():
 cdef inline object get_generic_parent(greenlet s):
     # We don't use any typed functions on the return of this,
     # so save the type check by making it just an object.
-    cdef object result
-    cdef void* parent = PyGreenlet_GetParent(s)
-    if parent != NULL:
-        # The cast will perform an incref; but the GetParent
-        # function already did an incref if we got it (and not NULL).
-        # Therefore, we must DECREF immediately.
-        result = <object>parent
-        Py_DECREF(result)
-        return result
+    if s.parent != NULL:
+        return <object>s.parent
 
 cdef inline SwitchOutGreenletWithLoop get_my_hub(greenlet s):
-    # This one we do want type checked on the return value.
     # Must not be called with s = None
-    cdef object result
-    cdef void* parent = PyGreenlet_GetParent(s)
-    if parent != NULL:
-        result = <object>parent
-        # See above
-        Py_DECREF(result)
-        return result
+    if s.parent != NULL:
+        return <object>s.parent
 
 cdef bint _greenlet_imported
 
@@ -69,31 +52,34 @@ cdef inline void greenlet_init():
         PyGreenlet_Import()
         _greenlet_imported = True
 
-ctypedef object CodeType
-ctypedef object FrameType
+cdef extern from "Python.h":
 
-cdef extern from "_compat.h":
-    int Gevent_PyFrame_GetLineNumber(FrameType frame)
-    CodeType Gevent_PyFrame_GetCode(FrameType frame)
-    object Gevent_PyFrame_GetBack(FrameType frame)
-    # We don't do this:
-    #
-    # ctypedef class types.FrameType [object PyFrameObject]:
-    #     pass
-    #
-    # to avoid "RuntimeWarning: types.FrameType size changed, may
-    # indicate binary incompatibility. Expected 56 from C header, got
-    # 120 from PyObject" on Python 3.11. That makes the functions that
-    # really require that kind of object not safe and capable of crashing the
-    # interpreter.
-    #
-    # However, as of cython 3.0a11, that results in a failure to compile if
-    # we have a local variable typed as FrameType, so we can't do that.
-    #
-    # Also, it removes a layer of type checking and makes it possible to crash
-    # the interpreter if you call these functions with something that's not a PyFrameObject.
-    # Don't do that.
+    ctypedef class types.CodeType [object PyCodeObject]:
+        pass
 
+cdef extern from "frameobject.h":
+
+    ctypedef class types.FrameType [object PyFrameObject]:
+        cdef CodeType f_code
+        # Accessing the f_lineno directly doesn't work. There is an accessor
+        # function, PyFrame_GetLineNumber that is needed to turn the raw line number
+        # into the executing line number.
+        # cdef int f_lineno
+        # We can't declare this in the object as an object, because it's
+        # allowed to be NULL, and Cython can't handle that.
+        # We have to go through the python machinery to get a
+        # proper None instead, or use an inline function.
+        cdef void* f_back
+
+    int PyFrame_GetLineNumber(FrameType frame)
+
+@cython.nonecheck(False)
+cdef inline FrameType get_f_back(FrameType frame):
+    if frame.f_back != NULL:
+        return <FrameType>frame.f_back
+
+cdef inline int get_f_lineno(FrameType frame):
+    return PyFrame_GetLineNumber(frame)
 
 cdef void _init()
 
@@ -119,11 +105,11 @@ cdef class _Frame:
 
 
 @cython.final
-@cython.locals(# frame=FrameType, # See above about why we cannot do this
+@cython.locals(frame=FrameType,
                newest_Frame=_Frame,
                newer_Frame=_Frame,
                older_Frame=_Frame)
-cdef _Frame _extract_stack(int limit)
+cdef inline _Frame _extract_stack(int limit)
 
 cdef class Greenlet(greenlet):
     cdef readonly object value
@@ -142,7 +128,6 @@ cdef class Greenlet(greenlet):
 
     cpdef bint has_links(self)
     cpdef join(self, timeout=*)
-    cpdef kill(self, exception=*, block=*, timeout=*)
     cpdef bint ready(self)
     cpdef bint successful(self)
     cpdef rawlink(self, object callback)
@@ -193,7 +178,7 @@ cdef Waiter
 cdef wait
 cdef iwait
 cdef reraise
-cdef GEVENT_CONFIG
+cpdef GEVENT_CONFIG
 
 
 @cython.final

@@ -17,6 +17,9 @@ class Condition(object):
     def __or__(self, other):
         return OrCondition(self, other)
 
+    def __nonzero__(self):
+        return self.__bool__()
+
     def __bool__(self):
         raise NotImplementedError
 
@@ -77,7 +80,6 @@ class _AttrCondition(ConstantCondition):
         ConstantCondition.__init__(self, getattr(sysinfo, name), name)
 
 PYPY = _AttrCondition('PYPY')
-PYPY3 = _AttrCondition('PYPY3')
 PY3 = _AttrCondition('PY3')
 PY2 = _AttrCondition('PY2')
 OSX = _AttrCondition('OSX')
@@ -91,8 +93,6 @@ COVERAGE = _AttrCondition('RUN_COVERAGE')
 RESOLVER_NOT_SYSTEM = _AttrCondition('RESOLVER_NOT_SYSTEM')
 BIT_64 = ConstantCondition(struct.calcsize('P') * 8 == 64, 'BIT_64')
 PY380_EXACTLY = ConstantCondition(sys.version_info[:3] == (3, 8, 0), 'PY380_EXACTLY')
-PY312B3_EXACTLY = ConstantCondition(sys.version_info == (3, 12, 0, 'beta', 3))
-PY312B4_EXACTLY = ConstantCondition(sys.version_info == (3, 12, 0, 'beta', 4))
 
 class _Definition(object):
     __slots__ = (
@@ -160,18 +160,12 @@ class Multi(object):
     def __init__(self):
         self._conds = []
 
-    def flaky(self, reason='', when=True, ignore_coverage=NEVER, run_alone=NEVER):
-        self._conds.append(
-            Flaky(
-                reason, when=when,
-                ignore_coverage=ignore_coverage,
-                run_alone=run_alone,
-            )
-        )
+    def flaky(self, reason='', when=True):
+        self._conds.append(Flaky(reason, when))
         return self
 
     def ignored(self, reason='', when=True):
-        self._conds.append(Ignored(reason, when=when))
+        self._conds.append(Ignored(reason, when))
         return self
 
     def __set_name__(self, owner, name):
@@ -183,7 +177,7 @@ class DefinitionsMeta(type):
     # a metaclass on Python 3 that makes sure we only set attributes once. pylint doesn't
     # warn about that.
     @classmethod
-    def __prepare__(mcs, name, bases): # pylint:disable=unused-argument,bad-dunder-name
+    def __prepare__(cls, name, bases): # pylint:disable=unused-argument
         return SetOnceMapping()
 
 
@@ -206,16 +200,6 @@ else:
 DefinitionsBase = DefinitionsMeta('DefinitionsBase', (object,), {})
 
 class Definitions(DefinitionsBase):
-
-    test__util = RunAlone(
-        """
-        If we have extra greenlets hanging around due to changes in GC, we won't
-        match the expected output.
-
-        So far, this is only seen on one version, in CI environment.
-        """,
-        when=(CI & (PY312B3_EXACTLY | PY312B4_EXACTLY))
-    )
 
     test__issue6 = Flaky(
         """test__issue6 (see comments in test file) is really flaky on both Travis and Appveyor;
@@ -295,19 +279,13 @@ class Definitions(DefinitionsBase):
 
     test__backdoor = Flaky(when=LEAKTEST | PYPY)
     test__socket_errors = Flaky(when=LEAKTEST)
-    test_signal = Multi().flaky(
+    test_signal = Flaky(
         "On Travis, this very frequently fails due to timing",
         when=TRAVIS & LEAKTEST,
         # Partial workaround for the _testcapi issue on PyPy,
         # but also because signal delivery can sometimes be slow, and this
         # spawn processes of its own
         run_alone=APPVEYOR,
-    ).ignored(
-        """
-        This fails to run a single test. It looks like just importing the module
-        can hang. All I see is the output from patch_all()
-        """,
-        when=APPVEYOR & PYPY3
     )
 
     test__monkey_sigchld_2 = Ignored(
@@ -325,21 +303,9 @@ class Definitions(DefinitionsBase):
         allocate SSL Context objects, either in Python 2.7 or 3.6.
         There must be some library incompatibility. No point even
         running them. XXX: Remember to turn this back on.
-
-        On Windows, with PyPy3.7 7.3.7, there seem to be all kind of certificate
-        errors.
         """,
-        when=(PYPY & TRAVIS) | (PYPY3 & WIN)
+        when=PYPY & TRAVIS
     )
-
-    test_httpservers = Ignored(
-        """
-        All the CGI tests hang. There appear to be subprocess problems.
-        """,
-        when=PYPY3 & WIN
-    )
-
-
 
     test__pywsgi = Ignored(
         """
@@ -353,23 +319,16 @@ class Definitions(DefinitionsBase):
         On Appveyor 3.8.0, for some reason this takes *way* too long, about 100s, which
         often goes just over the default timeout of 100s. This makes no sense.
         But it also takes nearly that long in 3.7. 3.6 and earlier are much faster.
-
-        It also takes just over 100s on PyPy 3.7.
         """,
         when=(PYPY & TRAVIS & LIBUV) | PY380_EXACTLY,
         # https://bitbucket.org/pypy/pypy/issues/2769/systemerror-unexpected-internal-exception
         run_alone=(CI & LEAKTEST & PY3) | (PYPY & LIBUV),
-        # This often takes much longer on PyPy on CI.
-        options={'timeout': (CI & PYPY, 180)},
     )
 
-    test_subprocess = Multi().flaky(
+    test_subprocess = Flaky(
         "Unknown, can't reproduce locally; times out one test",
         when=PYPY & PY3 & TRAVIS,
         ignore_coverage=ALWAYS,
-    ).ignored(
-        "Tests don't even start before the process times out.",
-        when=PYPY3 & WIN
     )
 
     test__threadpool = Ignored(
@@ -429,7 +388,7 @@ class Definitions(DefinitionsBase):
         off.
         """,
         when=COVERAGE,
-        ignore_coverage=ALWAYS,
+        ignore_coverage=ALWAYS
     )
 
     test__hub_join_timeout = Ignored(
@@ -458,7 +417,7 @@ class Definitions(DefinitionsBase):
         """
         On a heavily loaded box, these can all take upwards of 200s.
         """,
-        when=(CI & LEAKTEST) | (PYPY3 & APPVEYOR)
+        when=CI & LEAKTEST
     )
 
     test_socket = RunAlone(

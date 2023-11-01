@@ -4,7 +4,6 @@ c-ares based hostname resolver.
 """
 from __future__ import absolute_import, print_function, division
 import os
-import warnings
 
 from _socket import gaierror
 from _socket import herror
@@ -13,6 +12,7 @@ from _socket import EAI_NONAME
 
 from gevent._compat import text_type
 from gevent._compat import integer_types
+from gevent._compat import PY3
 
 from gevent.hub import Waiter
 from gevent.hub import get_hub
@@ -116,17 +116,12 @@ class Resolver(AbstractResolver):
 
        Handling of localhost and broadcast names is now more consistent.
 
-    .. versionchanged:: 22.10.1
-       Now has a ``__del__`` method that warns if the object is destroyed
-       without being properly closed.
-
     .. _c-ares: http://c-ares.haxx.se
     """
 
     cares_class = channel
 
     def __init__(self, hub=None, use_environ=True, **kwargs):
-        AbstractResolver.__init__(self)
         if hub is None:
             hub = get_hub()
         self.hub = hub
@@ -139,7 +134,7 @@ class Resolver(AbstractResolver):
         self.cares = self.cares_class(hub.loop, **kwargs)
         self.pid = os.getpid()
         self.params = kwargs
-        self.fork_watcher = hub.loop.fork(ref=False) # We shouldn't keep the loop alive
+        self.fork_watcher = hub.loop.fork(ref=False)
         self.fork_watcher.start(self._on_fork)
 
     def __repr__(self):
@@ -154,17 +149,10 @@ class Resolver(AbstractResolver):
             self.pid = pid
 
     def close(self):
-        AbstractResolver.close(self)
         if self.cares is not None:
             self.hub.loop.run_callback(self.cares.destroy)
             self.cares = None
         self.fork_watcher.stop()
-
-    def __del__(self):
-        if self.cares is not None:
-            warnings.warn("cares Resolver destroyed while not closed",
-                          ResourceWarning)
-            self.close()
 
     def _gethostbyname_ex(self, hostname_bytes, family):
         while True:
@@ -254,7 +242,6 @@ class Resolver(AbstractResolver):
                     (SOCK_DGRAM, SOL_UDP),
                 ]
 
-            # pylint:disable=not-an-iterable,unsubscriptable-object
             result = [
                 (rfamily,
                  hard_type if not rtype else rtype,
@@ -288,7 +275,6 @@ class Resolver(AbstractResolver):
                                        proto=0, flags=0)
             if not result:
                 raise
-            # pylint:disable=unsubscriptable-object
             _ip_address = result[0][-1][0]
             if isinstance(_ip_address, text_type):
                 _ip_address = _ip_address.encode('ascii')
@@ -328,7 +314,7 @@ class Resolver(AbstractResolver):
         self.cares.getnameinfo(waiter, address, flags)
         node, service = waiter.get()
 
-        if service is None:
+        if service is None and PY3:
             # ares docs: "If the query did not complete
             # successfully, or one of the values was not
             # requested, node or service will be NULL ". Python 2

@@ -2,10 +2,10 @@
  gevent
 ========
 
-.. image:: https://github.com/gevent/gevent/workflows/gevent%20testing/badge.svg
-   :target: https://github.com/gevent/gevent/actions
+.. image:: https://travis-ci.org/gevent/gevent.svg?branch=master
+   :target: https://travis-ci.org/gevent/gevent
 
-.. image:: https://ci.appveyor.com/api/projects/status/bqxl88yhpho223jg?svg=true
+.. image:: https://ci.appveyor.com/api/projects/status/q4kl21ng2yo2ixur?svg=true
    :target: https://ci.appveyor.com/project/denik/gevent
 
 .. image:: https://coveralls.io/repos/gevent/gevent/badge.svg?branch=master&service=github

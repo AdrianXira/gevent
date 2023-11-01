@@ -37,7 +37,6 @@ def TESTRUNNER(tests=None):
                  color="suboptimal-behaviour")
         return
 
-    # pylint:disable=unspecified-encoding
     with open(os.path.join(test_dir, 'version')) as f:
         preferred_version = f.read().strip()
 
@@ -55,11 +54,8 @@ def TESTRUNNER(tests=None):
 
     PYTHONPATH = (os.getcwd() + os.pathsep + get_absolute_pythonpath()).rstrip(':')
 
-    tests = sorted(set(os.path.basename(x) for x in tests))
-    version_tests = sorted(set(os.path.basename(x) for x in version_tests))
-
-    util.log("Discovered %d tests in %s", len(tests), test_dir)
-    util.log("Discovered %d version-specific tests in %s", len(version_tests), version_test_dir)
+    tests = [os.path.basename(x) for x in tests]
+    version_tests = [os.path.basename(x) for x in version_tests]
 
     options = {
         'cwd': test_dir,

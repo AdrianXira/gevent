@@ -13,7 +13,7 @@ import threading
 
 
 def helper():
-    threading.current_thread()
+    threading.currentThread()
     gevent.sleep(0.2)
 
 
@@ -59,15 +59,16 @@ class TestLockThread(greentest.TestCase):
 
     def test_spin_lock_switches(self):
         # https://github.com/gevent/gevent/issues/1464
-        # pylint:disable=consider-using-with
         lock = threading.Lock()
         lock.acquire()
         spawned = []
 
         def background():
             spawned.append(True)
-            while not lock.acquire(False):
-                pass
+            while 1:
+                # blocking= in Py3, wait (no default, no name) in Py2
+                if lock.acquire(False):
+                    break
 
         thread = threading.Thread(target=background)
         # If lock.acquire(False) doesn't yield when it fails,

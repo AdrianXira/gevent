@@ -13,15 +13,15 @@ as well as the constants from the :mod:`socket` module are imported into this mo
 # Our import magic sadly makes this warning useless
 # pylint: disable=undefined-variable
 
-
-from gevent._compat import PY311
+from gevent._compat import PY3
 from gevent._compat import exc_clear
 from gevent._util import copy_globals
 
 
-
-from gevent import _socket3 as _source
-
+if PY3:
+    from gevent import _socket3 as _source # python 2: pylint:disable=no-name-in-module
+else:
+    from gevent import _socket2 as _source
 
 # define some things we're expecting to overwrite; each module
 # needs to define these
@@ -59,10 +59,9 @@ except AttributeError:
     _GLOBAL_DEFAULT_TIMEOUT = object()
 
 
-def create_connection(address, timeout=_GLOBAL_DEFAULT_TIMEOUT, source_address=None, *,
-                      all_errors=False):
+def create_connection(address, timeout=_GLOBAL_DEFAULT_TIMEOUT, source_address=None):
     """
-    create_connection(address, timeout=None, source_address=None, *, all_errors=False) -> socket
+    create_connection(address, timeout=None, source_address=None) -> socket
 
     Connect to *address* and return the :class:`gevent.socket.socket`
     object.
@@ -81,22 +80,9 @@ def create_connection(address, timeout=_GLOBAL_DEFAULT_TIMEOUT, source_address=N
         If the host part of the address includes an IPv6 scope ID,
         it will be used instead of ignored, if the platform supplies
         :func:`socket.inet_pton`.
-    .. versionchanged:: 22.08.0
-        Add the *all_errors* argument. This only has meaning on Python 3.11+;
-        it is a programming error to pass it on earlier versions.
-    .. versionchanged:: 23.7.0
-        You can pass a value for ``all_errors`` on any version of Python.
-        It is forced to false for any version before 3.11 inside the function.
     """
-    # Sigh. This function is a near-copy of the CPython implementation.
-    # Even though we simplified some things, it's still a little complex to
-    # cope with error handling, which got even more complicated in 3.11.
-    # pylint:disable=too-many-locals,too-many-branches
-    if not PY311:
-        all_errors = False
 
     host, port = address
-    exceptions = []
     # getaddrinfo is documented as returning a list, but our interface
     # is pluggable, so be sure it does.
     addrs = list(getaddrinfo(host, port, 0, SOCK_STREAM))
@@ -113,25 +99,12 @@ def create_connection(address, timeout=_GLOBAL_DEFAULT_TIMEOUT, source_address=N
             if source_address:
                 sock.bind(source_address)
             sock.connect(sa)
-
-        except error as exc:
-            if not all_errors:
-                exceptions = [exc] # raise only the last error
-            else:
-                exceptions.append(exc)
-            del exc # cycle
+        except error:
             if sock is not None:
                 sock.close()
             sock = None
             if res is addrs[-1]:
-                if not all_errors:
-                    del exceptions[:]
-                    raise
-                try:
-                    raise ExceptionGroup("create_connection failed", exceptions)
-                finally:
-                    # Break explicitly a reference cycle
-                    del exceptions[:]
+                raise
             # without exc_clear(), if connect() fails once, the socket
             # is referenced by the frame in exc_info and the next
             # bind() fails (see test__socket.TestCreateConnection)
@@ -149,8 +122,6 @@ def create_connection(address, timeout=_GLOBAL_DEFAULT_TIMEOUT, source_address=N
             sock = None
             raise
         else:
-            # break reference cycles
-            del exceptions[:]
             try:
                 return sock
             finally:

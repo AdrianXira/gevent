@@ -19,7 +19,6 @@ from greenlet import getcurrent
 from gevent._compat import NativeStrIO
 
 class MyLocal(local.local):
-    # pylint:disable=disallowed-name
     def __init__(self, foo):
         self.foo = foo
 
@@ -40,7 +39,7 @@ class TestFormat(greentest.TestCase):
 
     def test_with_Greenlet(self):
         rl = local.local()
-        rl.some_attr = 1
+        rl.foo = 1
         def root():
             l = MyLocal(42)
             assert l
@@ -51,7 +50,6 @@ class TestFormat(greentest.TestCase):
             io = NativeStrIO()
             g = gevent.spawn(util.print_run_info, file=io)
             g.join()
-
             return io.getvalue()
 
         g = gevent.spawn(root)
@@ -150,10 +148,6 @@ class TestTree(greentest.TestCase):
         value = value.replace('ref=-1', 'ref=0')
         value = value.replace("type.current_tree", 'GreenletTree.current_tree')
         value = value.replace('gevent.tests.__main__.MyLocal', '__main__.MyLocal')
-        # The repr in CPython greenlet 1.0a1 added extra info
-        value = value.replace('(otid=X) ', '')
-        value = value.replace(' dead>', '>')
-        value = value.replace(' current active started main>', '>')
         return value
 
     @greentest.ignores_leakcheck

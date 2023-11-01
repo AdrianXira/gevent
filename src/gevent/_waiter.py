@@ -38,8 +38,6 @@ class Waiter(object):
     The :meth:`switch` and :meth:`throw` methods must only be called from the :class:`Hub` greenlet.
     The :meth:`get` method must be called from a greenlet other than :class:`Hub`.
 
-        >>> from gevent.hub import Waiter
-        >>> from gevent import get_hub
         >>> result = Waiter()
         >>> timer = get_hub().loop.timer(0.1)
         >>> timer.start(result.switch, 'hello from Waiter')
@@ -50,7 +48,6 @@ class Waiter(object):
     If switch is called before the greenlet gets a chance to call :meth:`get` then
     :class:`Waiter` stores the value.
 
-        >>> from gevent.time import sleep
         >>> result = Waiter()
         >>> timer = get_hub().loop.timer(0.1)
         >>> timer.start(result.switch, 'hi from Waiter')
@@ -184,7 +181,7 @@ class MultipleWaiter(Waiter):
         # more efficient, but since we're in the hub we avoid imports if
         # we can help it to better support monkey-patching, and delaying the import
         # here can be impractical (see https://github.com/gevent/gevent/issues/652)
-        self._values = []
+        self._values = list()
 
     def switch(self, value):
         self._values.append(value)

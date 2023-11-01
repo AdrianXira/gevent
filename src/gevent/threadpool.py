@@ -24,7 +24,6 @@ from gevent.pool import GroupMappingMixin
 from gevent.util import clear_stack_frames
 
 from gevent._threading import Queue
-from gevent._threading import EmptyTimeout
 from gevent._threading import start_new_thread
 from gevent._threading import get_thread_ident
 
@@ -40,17 +39,6 @@ def _format_hub(hub):
     return '<%s at 0x%x thread_ident=0x%x>' % (
         hub.__class__.__name__, id(hub), hub.thread_ident
     )
-
-
-def _get_thread_profile(_sys=sys):
-    if 'threading' in _sys.modules:
-        return _sys.modules['threading']._profile_hook
-
-
-def _get_thread_trace(_sys=sys):
-    if 'threading' in _sys.modules:
-        return _sys.modules['threading']._trace_hook
-
 
 class _WorkerGreenlet(RawGreenlet):
     # Exists to produce a more useful repr for worker pool
@@ -72,10 +60,6 @@ class _WorkerGreenlet(RawGreenlet):
 
     # A cookie passed to task_queue.get()
     _task_queue_cookie = None
-
-    # If not -1, how long to block waiting for a task before we
-    # exit.
-    _idle_task_timeout = -1
 
     def __init__(self, threadpool):
         # Construct in the main thread (owner of the threadpool)
@@ -99,7 +83,6 @@ class _WorkerGreenlet(RawGreenlet):
         self._task_queue = threadpool.task_queue # type:gevent._threading.Queue
         self._task_queue_cookie = self._task_queue.allocate_cookie()
         self._unregister_worker = threadpool._unregister_worker
-        self._idle_task_timeout = threadpool._idle_task_timeout
 
         threadpool._register_worker(self)
         try:
@@ -154,27 +137,12 @@ class _WorkerGreenlet(RawGreenlet):
                   file=stderr)
             tb = tb.tb_next
 
-    def _before_run_task(self, func, args, kwargs, thread_result,
-                         _sys=sys,
-                         _get_thread_profile=_get_thread_profile,
-                         _get_thread_trace=_get_thread_trace):
-        # pylint:disable=unused-argument
-        _sys.setprofile(_get_thread_profile())
-        _sys.settrace(_get_thread_trace())
-
-    def _after_run_task(self, func, args, kwargs, thread_result, _sys=sys):
-        # pylint:disable=unused-argument
-        _sys.setprofile(None)
-        _sys.settrace(None)
-
     def __run_task(self, func, args, kwargs, thread_result):
-        self._before_run_task(func, args, kwargs, thread_result)
         try:
             thread_result.set(func(*args, **kwargs))
         except: # pylint:disable=bare-except
             thread_result.handle_error((self, func), self._exc_info())
         finally:
-            self._after_run_task(func, args, kwargs, thread_result)
             del func, args, kwargs, thread_result
 
     def run(self):
@@ -186,19 +154,11 @@ class _WorkerGreenlet(RawGreenlet):
         task_queue_cookie = self._task_queue_cookie
         run_task = self.__run_task
         task_queue_done = self._task_queue.task_done
-        idle_task_timeout = self._idle_task_timeout
         try: # pylint:disable=too-many-nested-blocks
             while 1: # tiny bit faster than True on Py2
                 fixup_hub_before_block()
 
-                try:
-                    task = task_queue_get(task_queue_cookie, idle_task_timeout)
-                except EmptyTimeout:
-                    # Nothing to do, exit the thread. Do not
-                    # go into the next block where we would call
-                    # queue.task_done(), because we didn't actually
-                    # take a task.
-                    return
+                task = task_queue_get(task_queue_cookie)
                 try:
                     if task is None:
                         return
@@ -276,27 +236,12 @@ class ThreadPool(GroupMappingMixin):
     The `len` of instances of this class is the number of enqueued
     (unfinished) tasks.
 
-    Just before a task starts running in a worker thread,
-    the values of :func:`threading.setprofile` and :func:`threading.settrace`
-    are consulted. Any values there are installed in that thread for the duration
-    of the task (using :func:`sys.setprofile` and :func:`sys.settrace`, respectively).
-    (Because worker threads are long-lived and outlast any given task, this arrangement
-    lets the hook functions change between tasks, but does not let them see the
-    bookkeeping done by the worker thread itself.)
-
     .. caution:: Instances of this class are only true if they have
        unfinished tasks.
 
     .. versionchanged:: 1.5a3
        The undocumented ``apply_e`` function, deprecated since 1.1,
        was removed.
-    .. versionchanged:: 20.12.0
-       Install the profile and trace functions in the worker thread while
-       the worker thread is running the supplied task.
-    .. versionchanged:: 22.08.0
-       Add the option to let idle threads expire and be removed
-       from the pool after *idle_task_timeout* seconds (-1 for no
-       timeout)
     """
 
     __slots__ = (
@@ -321,12 +266,9 @@ class ThreadPool(GroupMappingMixin):
         # The task queue is itself safe to use from multiple
         # native threads.
         'task_queue',
-        '_idle_task_timeout',
     )
 
-    _WorkerGreenlet = _WorkerGreenlet
-
-    def __init__(self, maxsize, hub=None, idle_task_timeout=-1):
+    def __init__(self, maxsize, hub=None):
         if hub is None:
             hub = get_hub()
         self.hub = hub
@@ -334,7 +276,6 @@ class ThreadPool(GroupMappingMixin):
         self.manager = None
         self.task_queue = Queue()
         self.fork_watcher = None
-        self._idle_task_timeout = idle_task_timeout
 
         self._worker_greenlets = set()
         self._maxsize = 0
@@ -480,7 +421,7 @@ class ThreadPool(GroupMappingMixin):
             self.fork_watcher.stop()
 
     def _adjust_wait(self):
-        delay = self.hub.loop.approx_timer_resolution
+        delay = 0.0001
         while True:
             self._adjust_step()
             if len(self._worker_greenlets) <= self._maxsize:
@@ -496,7 +437,7 @@ class ThreadPool(GroupMappingMixin):
             self.manager = Greenlet.spawn(self._adjust_wait)
 
     def _add_thread(self):
-        self._WorkerGreenlet(self)
+        _WorkerGreenlet(self)
 
     def spawn(self, func, *args, **kwargs):
         """
@@ -572,7 +513,7 @@ class _FakeAsync(object):
         pass
     close = stop = send
 
-    def __call__(self, result):
+    def __call_(self, result):
         "fake out for 'receiver'"
 
     def __bool__(self):

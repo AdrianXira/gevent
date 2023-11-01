@@ -32,7 +32,6 @@ class SelectorTestMixin(object):
 
     def _check_selector(self, sel):
         server, client = socket.socketpair()
-        glet = None
         try:
             sel.register(server, selectors.EVENT_READ, self.read_from_ready_socket_and_reply)
             glet = gevent.spawn(self.run_selector_once, sel)
@@ -44,9 +43,8 @@ class SelectorTestMixin(object):
             sel.close()
             server.close()
             client.close()
-            if glet is not None:
-                glet.join(10)
-        self.assertTrue(glet is not None and glet.ready())
+            glet.join(10)
+        self.assertTrue(glet.ready())
 
 
 class GeventSelectorTest(SelectorTestMixin,

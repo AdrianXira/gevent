@@ -1,6 +1,6 @@
-===============================================
- Cooperative Timeouts Using ``gevent.Timeout``
-===============================================
+======================
+ Cooperative Timeouts
+======================
 
 Cooperative timeouts can be implemented with the
 :class:`gevent.Timeout` class, and the helper function

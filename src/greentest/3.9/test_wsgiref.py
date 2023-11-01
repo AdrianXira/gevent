@@ -579,7 +579,7 @@ class HandlerTests(TestCase):
         # Test handler.environ as a dict
         expected = {}
         setup_testing_defaults(expected)
-        # Handler inherits os_environ variables which are not overridden
+        # Handler inherits os_environ variables which are not overriden
         # by SimpleHandler.add_cgi_vars() (SimpleHandler.base_env)
         for key, value in os_environ.items():
             if key not in expected:

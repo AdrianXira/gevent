@@ -27,7 +27,6 @@ __all__ = []
 
 WIN = sys.platform.startswith('win32')
 LIBUV_EMBED = _setuputils.should_embed('libuv')
-PY2 = sys.version_info[0] == 2
 
 
 ffi = FFI()
@@ -38,7 +37,6 @@ setup_py_dir = os.path.abspath(os.path.join(thisdir, '..', '..', '..'))
 libuv_dir = os.path.abspath(os.path.join(setup_py_dir, 'deps', 'libuv'))
 
 def read_source(name):
-    # pylint:disable=unspecified-encoding
     with open(os.path.join(thisdir, name), 'r') as f:
         return f.read()
 
@@ -92,10 +90,7 @@ LIBUV_SOURCES = [
     _libuv_source('uv-data-getter-setters.c'),
     _libuv_source('timer.c'),
     _libuv_source('idna.c'),
-    _libuv_source('strscpy.c'),
-    # Added between 1.42.0 and 1.44.2; only used
-    # on unix in that release, but generic
-    _libuv_source('strtok.c'),
+    _libuv_source('strscpy.c')
 ]
 
 if WIN:
@@ -165,8 +160,7 @@ if sys.platform.startswith('linux'):
         _libuv_source('unix/linux-syscalls.c'),
         _libuv_source('unix/procfs-exepath.c'),
         _libuv_source('unix/proctitle.c'),
-        _libuv_source('unix/random-sysctl-linux.c'),
-        _libuv_source('unix/epoll.c'),
+        _libuv_source('unix/sysinfo-loadavg.c'),
     ]
 elif sys.platform == 'darwin':
     LIBUV_SOURCES += [
@@ -177,8 +171,7 @@ elif sys.platform == 'darwin':
         _libuv_source('unix/kqueue.c'),
         _libuv_source('unix/proctitle.c'),
     ]
-elif sys.platform.startswith(('freebsd', 'dragonfly')): # pragma: no cover
-    # Not tested
+elif sys.platform.startswith(('freebsd', 'dragonfly')):
     LIBUV_SOURCES += [
         _libuv_source('unix/bsd-ifaddrs.c'),
         _libuv_source('unix/freebsd.c'),
@@ -186,8 +179,7 @@ elif sys.platform.startswith(('freebsd', 'dragonfly')): # pragma: no cover
         _libuv_source('unix/posix-hrtime.c'),
         _libuv_source('unix/bsd-proctitle.c'),
     ]
-elif sys.platform.startswith('openbsd'): # pragma: no cover
-    # Not tested
+elif sys.platform.startswith('openbsd'):
     LIBUV_SOURCES += [
         _libuv_source('unix/bsd-ifaddrs.c'),
         _libuv_source('unix/kqueue.c'),
@@ -195,8 +187,7 @@ elif sys.platform.startswith('openbsd'): # pragma: no cover
         _libuv_source('unix/posix-hrtime.c'),
         _libuv_source('unix/bsd-proctitle.c'),
     ]
-elif sys.platform.startswith('netbsd'): # pragma: no cover
-    # Not tested
+elif sys.platform.startswith('netbsd'):
     LIBUV_SOURCES += [
         _libuv_source('unix/bsd-ifaddrs.c'),
         _libuv_source('unix/kqueue.c'),
@@ -204,38 +195,19 @@ elif sys.platform.startswith('netbsd'): # pragma: no cover
         _libuv_source('unix/posix-hrtime.c'),
         _libuv_source('unix/bsd-proctitle.c'),
     ]
-elif sys.platform.startswith('sunos'): # pragma: no cover
-    # Not tested.
+elif sys.platform.startswith('sunos'):
     LIBUV_SOURCES += [
         _libuv_source('unix/no-proctitle.c'),
         _libuv_source('unix/sunos.c'),
     ]
-elif sys.platform.startswith('aix'): # pragma: no cover
-    # Not tested.
+elif sys.platform.startswith('aix'):
     LIBUV_SOURCES += [
         _libuv_source('unix/aix.c'),
         _libuv_source('unix/aix-common.c'),
     ]
-elif sys.platform.startswith('haiku'): # pragma: no cover
-    # Not tested
+elif sys.platform.startswith('haiku'): # untested
     LIBUV_SOURCES += [
         _libuv_source('unix/haiku.c')
-    ]
-elif sys.platform.startswith('cygwin'): # pragma: no cover
-    # Not tested.
-
-    # Based on Cygwin package sources /usr/src/libuv-1.32.0-1.src/libuv-1.32.0/Makefile.am
-    # Apparently the same upstream at https://github.com/libuv/libuv/blob/v1.x/Makefile.am
-    LIBUV_SOURCES += [
-        _libuv_source('unix/cygwin.c'),
-        _libuv_source('unix/bsd-ifaddrs.c'),
-        _libuv_source('unix/no-fsevents.c'),
-        _libuv_source('unix/no-proctitle.c'),
-        _libuv_source('unix/posix-hrtime.c'),
-        _libuv_source('unix/posix-poll.c'),
-        _libuv_source('unix/procfs-exepath.c'),
-        _libuv_source('unix/sysinfo-loadavg.c'),
-        _libuv_source('unix/sysinfo-memory.c'),
     ]
 
 
@@ -263,12 +235,11 @@ if sys.platform.startswith('linux'):
 elif sys.platform == 'darwin':
     _define_macro('_DARWIN_USE_64_BIT_INODE', 1)
     _define_macro('_DARWIN_UNLIMITED_SELECT', 1)
-elif sys.platform.startswith('netbsd'): # pragma: no cover
+elif sys.platform.startswith('netbsd'):
     _add_library('kvm')
-elif sys.platform.startswith('sunos'): # pragma: no cover
+elif sys.platform.startswith('sunos'):
     _define_macro('__EXTENSIONS__', 1)
     _define_macro('_XOPEN_SOURCE', 500)
-    _define_macro('_REENTRANT', 1)
     _add_library('kstat')
     _add_library('nsl')
     _add_library('sendfile')
@@ -277,38 +248,17 @@ elif sys.platform.startswith('sunos'): # pragma: no cover
         # https://github.com/libuv/libuv/issues/1458
         # https://github.com/giampaolo/psutil/blob/4d6a086411c77b7909cce8f4f141bbdecfc0d354/setup.py#L298-L300
         _define_macro('SUNOS_NO_IFADDRS', '')
-elif sys.platform.startswith('aix'): # pragma: no cover
+elif sys.platform.startswith('aix'):
     _define_macro('_LINUX_SOURCE_COMPAT', 1)
-    if os.uname().sysname != 'OS400':
-        _add_library('perfstat')
+    _add_library('perfstat')
 elif WIN:
-    # All other gevent .pyd files link to the specific minor-version Python
-    # DLL, so we should do the same here. In virtual environments that don't
-    # contain the major-version python?.dll stub, _corecffi.pyd would otherwise
-    # cause the Windows DLL loader to search the entire PATH for a DLL with
-    # that name. This might end up bringing a second, ABI-incompatible Python
-    # version into the process, which can easily lead to crashes.
-    # See https://github.com/gevent/gevent/pull/1814/files
-    _define_macro('_CFFI_NO_LIMITED_API', 1)
-
     _define_macro('_GNU_SOURCE', 1)
     _define_macro('WIN32', 1)
     _define_macro('_CRT_SECURE_NO_DEPRECATE', 1)
     _define_macro('_CRT_NONSTDC_NO_DEPRECATE', 1)
     _define_macro('_CRT_SECURE_NO_WARNINGS', 1)
-    _define_macro('_WIN32_WINNT', '0x0602')
+    _define_macro('_WIN32_WINNT', '0x0600')
     _define_macro('WIN32_LEAN_AND_MEAN', 1)
-    # This value isn't available on the platform that we build and
-    # test Python 2.7 on. It's used for getting power management
-    # suspend/resume notifications, maybe for keeping timers accurate?
-    #
-    # TODO: This should be a more targeted check based on the platform
-    # version, but that's complicated because it depends on having a
-    # particular patch installed to the OS, and I don't know how to
-    # check for that...but we're dropping Python 2 support soon, so
-    # I suspect it really doesn't matter.
-    if PY2:
-        _define_macro('LOAD_LIBRARY_SEARCH_SYSTEM32', 0)
     _add_library('advapi32')
     _add_library('iphlpapi')
     _add_library('psapi')

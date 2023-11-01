@@ -25,11 +25,21 @@ from gevent import monkey
 monkey.patch_all()
 
 from contextlib import contextmanager
-from urllib.parse import parse_qs
+try:
+    from urllib.parse import parse_qs
+except ImportError:
+    # Python 2
+    from urlparse import parse_qs
 import os
 import sys
-from io import BytesIO as StringIO
-
+try:
+    # On Python 2, we want the C-optimized version if
+    # available; it has different corner-case behaviour than
+    # the Python implementation, and it used by socket.makefile
+    # by default.
+    from cStringIO import StringIO
+except ImportError:
+    from io import BytesIO as StringIO
 import weakref
 import unittest
 from wsgiref.validate import validator
@@ -146,10 +156,6 @@ class Response(object):
     @classmethod
     def read(cls, fd, code=200, reason='default', version='1.1',
              body=None, chunks=None, content_length=None):
-        """
-        Read an HTTP response, optionally perform assertions,
-        and return the Response object.
-        """
         # pylint:disable=too-many-branches
         _status_line, headers = read_headers(fd)
         self = cls(_status_line, headers)
@@ -302,14 +308,14 @@ class TestCase(greentest.TestCase):
     def makefile(self):
         with self.connect() as sock:
             try:
-                result = sock.makefile(bufsize=1) # pylint:disable=unexpected-keyword-arg
+                result = sock.makefile(bufsize=1)
                 yield result
             finally:
                 result.close()
 
     def urlopen(self, *args, **kwargs):
         with self.connect() as sock:
-            with sock.makefile(bufsize=1) as fd: # pylint:disable=unexpected-keyword-arg
+            with sock.makefile(bufsize=1) as fd:
                 fd.write('GET / HTTP/1.1\r\nHost: localhost\r\n\r\n')
                 return read_http(fd, *args, **kwargs)
 
@@ -426,35 +432,18 @@ class TestNoChunks(CommonTestMixin, TestCase):
     # when returning a list of strings a shortcut is employed by the server:
     # it calculates the content-length and joins all the chunks before sending
     validator = None
-    last_environ = None
-
-    def _check_environ(self, input_terminated=True):
-        if input_terminated:
-            self.assertTrue(self.last_environ.get('wsgi.input_terminated'))
-        else:
-            self.assertFalse(self.last_environ['wsgi.input_terminated'])
 
     def application(self, env, start_response):
-        self.last_environ = env
+        self.assertTrue(env.get('wsgi.input_terminated'))
         path = env['PATH_INFO']
         if path == '/':
             start_response('200 OK', [('Content-Type', 'text/plain')])
             return [b'hello ', b'world']
-        if path == '/websocket':
-            write = start_response('101 Switching Protocols',
-                                   [('Content-Type', 'text/plain'),
-                                    # Con:close is to make our simple client
-                                    # happy; otherwise it wants to read data from the
-                                    # body thot's being kept open.
-                                    ('Connection', 'close')])
-            write(b'') # Trigger finalizing the headers now.
-            return [b'upgrading to', b'websocket']
         start_response('404 Not Found', [('Content-Type', 'text/plain')])
         return [b'not ', b'found']
 
     def test_basic(self):
         response, dne_response = super(TestNoChunks, self).test_basic()
-        self._check_environ()
         self.assertFalse(response.chunks)
         response.assertHeader('Content-Length', '11')
         if dne_response is not None:
@@ -466,27 +455,7 @@ class TestNoChunks(CommonTestMixin, TestCase):
             fd.write(self.format_request(path='/notexist'))
             response = read_http(fd, code=404, reason='Not Found', body='not found')
         self.assertFalse(response.chunks)
-        self._check_environ()
         response.assertHeader('Content-Length', '9')
-
-class TestConnectionUpgrades(TestNoChunks):
-
-    def test_connection_upgrade(self):
-        with self.makefile() as fd:
-            fd.write(self.format_request(path='/websocket', Connection='upgrade'))
-            response = read_http(fd, code=101)
-
-        self._check_environ(input_terminated=False)
-        self.assertFalse(response.chunks)
-
-    def test_upgrade_websocket(self):
-        with self.makefile() as fd:
-            fd.write(self.format_request(path='/websocket', Upgrade='websocket'))
-            response = read_http(fd, code=101)
-
-        self._check_environ(input_terminated=False)
-        self.assertFalse(response.chunks)
-
 
 class TestNoChunks10(TestNoChunks):
     HTTP_CLIENT_VERSION = '1.0'
@@ -502,11 +471,10 @@ class TestNoChunks10KeepAlive(TestNoChunks10):
 
 
 class TestExplicitContentLength(TestNoChunks): # pylint:disable=too-many-ancestors
-    # when returning a list of strings a shortcut is employed by the
+    # when returning a list of strings a shortcut is empoyed by the
     # server - it caculates the content-length
 
     def application(self, env, start_response):
-        self.last_environ = env
         self.assertTrue(env.get('wsgi.input_terminated'))
         path = env['PATH_INFO']
         if path == '/':
@@ -710,14 +678,7 @@ class TestNegativeReadline(TestCase):
 
 class TestChunkedPost(TestCase):
 
-    calls = 0
-
-    def setUp(self):
-        super().setUp()
-        self.calls = 0
-
     def application(self, env, start_response):
-        self.calls += 1
         self.assertTrue(env.get('wsgi.input_terminated'))
         start_response('200 OK', [('Content-Type', 'text/plain')])
         if env['PATH_INFO'] == '/a':
@@ -730,8 +691,6 @@ class TestChunkedPost(TestCase):
 
         if env['PATH_INFO'] == '/c':
             return list(iter(lambda: env['wsgi.input'].read(1), b''))
-
-        return [b'We should not get here', env['PATH_INFO'].encode('ascii')]
 
     def test_014_chunked_post(self):
         data = (b'POST /a HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n'
@@ -800,179 +759,6 @@ class TestChunkedPost(TestCase):
             fd.write(data)
             read_http(fd, code=400)
 
-    # XXX: Not sure which one, but one (or more) of these is leading to a
-    # test timeout on Windows. Figure out what/why and solve.
-
-    @greentest.skipOnWindows('Maybe hangs')
-    def test_trailers_keepalive_ignored(self):
-        # Trailers after a chunk are ignored.
-        data1 = (
-            b'POST /a HTTP/1.1\r\n'
-            b'Host: localhost\r\n'
-            b'Connection: keep-alive\r\n'
-            b'Transfer-Encoding: chunked\r\n'
-            b'\r\n'
-            b'2\r\noh\r\n'
-            b'4\r\n hai\r\n'
-            b'0\r\n' # last-chunk
-            # Normally the final CRLF would go here, but if you put in a
-            # trailer, it doesn't.
-            b'trailer1: value1\r\n'
-            b'trailer2: value2\r\n'
-            b'\r\n' # Really terminate the chunk.
-        )
-        data2 = (
-            b'POST /a HTTP/1.1\r\n'
-            b'Host: localhost\r\n'
-            b'Connection: close\r\n'
-            b'Transfer-Encoding: chunked\r\n'
-            b'\r\n'
-            b'2\r\noh\r\n'
-            b'4\r\n bye\r\n'
-            b'0\r\n' # last-chunk
-        )
-        with self.makefile() as fd:
-            fd.write(data1)
-            read_http(fd, body='oh hai')
-            fd.write(data2)
-            read_http(fd, body='oh bye')
-
-        self.assertEqual(self.calls, 2)
-
-    @greentest.skipOnWindows('Maybe hangs')
-    def test_trailers_close_ignored(self):
-        data = (
-            b'POST /a HTTP/1.1\r\n'
-            b'Host: localhost\r\n'
-            b'Connection: close\r\n'
-            b'Transfer-Encoding: chunked\r\n'
-            b'\r\n'
-            b'2\r\noh\r\n'
-            b'4\r\n hai\r\n'
-            b'0\r\n' # last-chunk
-            # Normally the final CRLF would go here, but if you put in a
-            # trailer, it doesn't.
-            # b'\r\n'
-            b'GETpath2a:123 HTTP/1.1\r\n'
-            b'Host: a.com\r\n'
-            b'Connection: close\r\n'
-            b'\r\n'
-        )
-        with self.makefile() as fd:
-            fd.write(data)
-            read_http(fd, body='oh hai')
-            with self.assertRaises(ConnectionClosed):
-                read_http(fd)
-
-    @greentest.skipOnWindows('Maybe hangs')
-    def test_trailers_too_long(self):
-        # Trailers after a chunk are ignored.
-        data = (
-            b'POST /a HTTP/1.1\r\n'
-            b'Host: localhost\r\n'
-            b'Connection: keep-alive\r\n'
-            b'Transfer-Encoding: chunked\r\n'
-            b'\r\n'
-            b'2\r\noh\r\n'
-            b'4\r\n hai\r\n'
-            b'0\r\n' # last-chunk
-            # Normally the final CRLF would go here, but if you put in a
-            # trailer, it doesn't.
-            b'trailer2: value2' # note lack of \r\n
-        )
-        data += b't' * pywsgi.MAX_REQUEST_LINE
-        # No termination, because we detect the trailer as being too
-        # long and abort the connection.
-        with self.makefile() as fd:
-            fd.write(data)
-            read_http(fd, body='oh hai')
-            with self.assertRaises(ConnectionClosed):
-                read_http(fd, body='oh bye')
-
-    @greentest.skipOnWindows('Maybe hangs')
-    def test_trailers_request_smuggling_missing_last_chunk_keep_alive(self):
-        # When something that looks like a request line comes in the trailer
-        # as the first line, immediately after an invalid last chunk.
-        # We detect this and abort the connection, because the
-        # whitespace in the GET line isn't a legal part of a trailer.
-        # If we didn't abort the connection, then, because we specified
-        # keep-alive, the server would be hanging around waiting for more input.
-        data = (
-            b'POST /a HTTP/1.1\r\n'
-            b'Host: localhost\r\n'
-            b'Connection: keep-alive\r\n'
-            b'Transfer-Encoding: chunked\r\n'
-            b'\r\n'
-            b'2\r\noh\r\n'
-            b'4\r\n hai\r\n'
-            b'0' # last-chunk, but missing the \r\n
-            # Normally the final CRLF would go here, but if you put in a
-            # trailer, it doesn't.
-            # b'\r\n'
-            b'GET /path2?a=:123 HTTP/1.1\r\n'
-            b'Host: a.com\r\n'
-            b'Connection: close\r\n'
-            b'\r\n'
-        )
-        with self.makefile() as fd:
-            fd.write(data)
-            read_http(fd, body='oh hai')
-            with self.assertRaises(ConnectionClosed):
-                read_http(fd)
-
-        self.assertEqual(self.calls, 1)
-
-    @greentest.skipOnWindows('Maybe hangs')
-    def test_trailers_request_smuggling_header_first(self):
-        # When something that looks like a header comes in the first line.
-        data = (
-            b'POST /a HTTP/1.1\r\n'
-            b'Host: localhost\r\n'
-            b'Connection: keep-alive\r\n'
-            b'Transfer-Encoding: chunked\r\n'
-            b'\r\n'
-            b'2\r\noh\r\n'
-            b'4\r\n hai\r\n'
-            b'0\r\n' # last-chunk, but only one CRLF
-            b'Header: value\r\n'
-            b'GET /path2?a=:123 HTTP/1.1\r\n'
-            b'Host: a.com\r\n'
-            b'Connection: close\r\n'
-            b'\r\n'
-        )
-        with self.makefile() as fd:
-            fd.write(data)
-            read_http(fd, body='oh hai')
-            with self.assertRaises(ConnectionClosed):
-                read_http(fd, code=400)
-
-        self.assertEqual(self.calls, 1)
-
-    @greentest.skipOnWindows('Maybe hangs')
-    def test_trailers_request_smuggling_request_terminates_then_header(self):
-        data = (
-            b'POST /a HTTP/1.1\r\n'
-            b'Host: localhost\r\n'
-            b'Connection: keep-alive\r\n'
-            b'Transfer-Encoding: chunked\r\n'
-            b'\r\n'
-            b'2\r\noh\r\n'
-            b'4\r\n hai\r\n'
-            b'0\r\n' # last-chunk
-            b'\r\n'
-            b'Header: value'
-            b'GET /path2?a=:123 HTTP/1.1\r\n'
-            b'Host: a.com\r\n'
-            b'Connection: close\r\n'
-            b'\r\n'
-        )
-        with self.makefile() as fd:
-            fd.write(data)
-            read_http(fd, body='oh hai')
-            read_http(fd, code=400)
-
-        self.assertEqual(self.calls, 1)
-
 
 class TestUseWrite(TestCase):
 
@@ -993,7 +779,6 @@ class TestUseWrite(TestCase):
             write(self.body)
             write(self.body)
         else:
-            # pylint:disable-next=broad-exception-raised
             raise Exception('Invalid url')
         return [self.end]
 
@@ -1034,7 +819,7 @@ class HttpsTestCase(TestCase):
     def urlopen(self, method='GET', post_body=None, **kwargs): # pylint:disable=arguments-differ
         import ssl
         with self.connect() as raw_sock:
-            with ssl.wrap_socket(raw_sock) as sock: # pylint:disable=deprecated-method
+            with ssl.wrap_socket(raw_sock) as sock:
                 with sock.makefile(bufsize=1) as fd: # pylint:disable=unexpected-keyword-arg
                     fd.write('%s / HTTP/1.1\r\nHost: localhost\r\n' % method)
                     if post_body is not None:
@@ -1234,7 +1019,7 @@ class TestInputN(TestCase):
         self.urlopen()
 
 
-class TestErrorInApplication(TestCase):
+class TestError(TestCase):
 
     error = object()
     error_fatal = False
@@ -1249,7 +1034,7 @@ class TestErrorInApplication(TestCase):
         self.assert_error(greentest.ExpectedException, self.error)
 
 
-class TestError_after_start_response(TestErrorInApplication):
+class TestError_after_start_response(TestError):
 
     def application(self, env, start_response):
         self.error = greentest.ExpectedException('TestError_after_start_response.application')
@@ -1322,7 +1107,8 @@ class TestContentLength304(TestCase):
         except AssertionError as ex:
             start_response('200 Raised', [])
             return ex.args
-        raise AssertionError('start_response did not fail but it should')
+        else:
+            raise AssertionError('start_response did not fail but it should')
 
     def test_err(self):
         body = "Invalid Content-Length for 304 response: '100' (must be absent or zero)"
@@ -1389,12 +1175,6 @@ class BadRequestTests(TestCase):
     # pywsgi checks content-length, but wsgi does not
     content_length = None
 
-    assert TestCase.handler_class._print_unexpected_exc
-
-    class handler_class(TestCase.handler_class):
-        def _print_unexpected_exc(self):
-            raise AssertionError("Should not print a traceback")
-
     def application(self, env, start_response):
         self.assertEqual(env['CONTENT_LENGTH'], self.content_length)
         start_response('200 OK', [('Content-Type', 'text/plain')])
@@ -1411,15 +1191,6 @@ class BadRequestTests(TestCase):
         with self.makefile() as fd:
             fd.write('GET / HTTP/1.1\r\nHost: localhost\r\nContent-Length: %s\r\n\r\n' % self.content_length)
             read_http(fd, code=(200, 400))
-
-    def test_bad_request_line_with_percent(self):
-        # If the request is invalid and contains Python formatting characters (%)
-        # we don't fail to log the error and we do generate a 400.
-        # https://github.com/gevent/gevent/issues/1708
-        bad_request = 'GET / HTTP %\r\n'
-        with self.makefile() as fd:
-            fd.write(bad_request)
-            read_http(fd, code=400)
 
 
 class ChunkedInputTests(TestCase):
@@ -1808,10 +1579,10 @@ class TestInputRaw(greentest.BaseTestCase):
         return Input(StringIO(data), content_length=content_length, chunked_input=chunked_input)
 
     if PY3:
-        def assertEqual(self, first, second, msg=None):
-            if isinstance(second, str):
-                second = second.encode('ascii')
-            super(TestInputRaw, self).assertEqual(first, second, msg)
+        def assertEqual(self, data, expected, *args): # pylint:disable=arguments-differ
+            if isinstance(expected, str):
+                expected = expected.encode('ascii')
+            super(TestInputRaw, self).assertEqual(data, expected, *args)
 
     def test_short_post(self):
         i = self.make_input("1", content_length=2)
@@ -1875,7 +1646,7 @@ class TestInputRaw(greentest.BaseTestCase):
         data = b'asdf\nghij\n'
         long_data = b'a' * (pywsgi.MAX_REQUEST_LINE + 10)
         long_data += b'\n'
-        data += long_data
+        data = data + long_data
         partial_data = b'qjk\n' # Note terminating \n
         n = 25 * 1000000000
         if hasattr(n, 'bit_length'):

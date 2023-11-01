@@ -1,9 +1,9 @@
+# This line can be commented out so that most tests run with the
+# system socket for comparison.
 from __future__ import print_function
 from __future__ import absolute_import
 
 from gevent import monkey
-# This line can be commented out so that most tests run with the
-# system socket for comparison.
 monkey.patch_all()
 
 import sys
@@ -32,9 +32,6 @@ from threading import Thread as _Thread
 from threading import Event
 
 errno_types = int
-
-# socket.accept/unwrap/makefile aren't found for some reason
-# pylint:disable=no-member
 
 class BaseThread(object):
     terminal_exc = None
@@ -198,9 +195,7 @@ class TestTCP(greentest.TestCase):
                     # from generating ``ConnectionResetError`` on AppVeyor.
                     try:
                         client = client.unwrap()
-                    except (ValueError, OSError):
-                        # PyPy raises _cffi_ssl._stdssl.error.SSLSyscallError,
-                        # which is an IOError in 2.7 and OSError in 3.7
+                    except ValueError:
                         pass
 
                 try:
@@ -214,7 +209,7 @@ class TestTCP(greentest.TestCase):
                     # lets do a shutdown everywhere, but only after removing any
                     # SSL wrapping.
                     client.shutdown(socket.SHUT_RDWR)
-                except OSError:
+                except (OSError, socket.error):
                     pass
 
                 log("Client will close")
@@ -396,13 +391,13 @@ class TestTCP(greentest.TestCase):
 
     def test_attributes(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 0)
-        self.assertIs(s.family, socket.AF_INET)
-        self.assertEqual(s.type, socket.SOCK_DGRAM)
+        self.assertEqual(socket.AF_INET, s.type)
+        self.assertEqual(socket.SOCK_DGRAM, s.family)
         self.assertEqual(0, s.proto)
 
         if hasattr(socket, 'SOCK_NONBLOCK'):
             s.settimeout(1)
-            self.assertIs(s.family, socket.AF_INET)
+            self.assertEqual(socket.AF_INET, s.type)
 
             s.setblocking(0)
             std_socket = monkey.get_original('socket', 'socket')(socket.AF_INET, socket.SOCK_DGRAM, 0)
@@ -433,31 +428,6 @@ class TestTCP(greentest.TestCase):
                 s.connect_ex(('foo.bar.fizzbuzz', support.find_unused_port()))
         finally:
             s.close()
-
-    @skipWithoutExternalNetwork("Tries to resolve hostname")
-    def test_connect_ex_not_call_connect(self):
-        # Issue 1931
-
-        def do_it(sock):
-            try:
-                with self.assertRaises(socket.gaierror):
-                    sock.connect_ex(('foo.bar.fizzbuzz', support.find_unused_port()))
-            finally:
-                sock.close()
-
-        # An instance attribute doesn't matter because we can't set it
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        with self.assertRaises(AttributeError):
-            s.connect = None
-        s.close()
-
-        # A subclass
-        class S(socket.socket):
-            def connect(self, *args):
-                raise AssertionError('Should not be called')
-
-        s = S(socket.AF_INET, socket.SOCK_STREAM)
-        do_it(s)
 
     def test_connect_ex_nonblocking_overflow(self):
         # Issue 841
@@ -503,7 +473,6 @@ class TestCreateConnection(greentest.TestCase):
 
     def test_refuses(self, **conn_args):
         connect_port = support.find_unused_port()
-
         with self.assertRaisesRegex(
                 socket.error,
                 # We really expect "connection refused". It's unclear
@@ -514,9 +483,7 @@ class TestCreateConnection(greentest.TestCase):
                 # use', which makes even less sense. The manylinux
                 # 2010 environment produces 'errno 99 Cannot assign
                 # requested address', which, I guess?
-                # Meanwhile, the musllinux_1 environment produces
-                # '[Errno 99] Address not available'
-                'refused|not known|already in use|assign|not available'
+                'refused|not known|already in use|assign'
         ):
             socket.create_connection(
                 (greentest.DEFAULT_BIND_ADDR, connect_port),
@@ -606,11 +573,6 @@ class TestFunctions(greentest.TestCase):
             exclude.append('gethostbyname')
             exclude.append('gethostbyname_ex')
             exclude.append('gethostbyaddr')
-        if sys.version_info[:2] < (3, 11):
-            # 3.11+ add ``*, all_errors=False``. We allow that on all versions,
-            # forcing it to a false value if the user sends a true value before
-            # exception groups exist.
-            exclude.append('create_connection')
         self.assertMonkeyPatchedFuncSignatures('socket', exclude=exclude)
 
     def test_resolve_ipv6_scope_id(self):
@@ -636,26 +598,6 @@ class TestSocket(greentest.TestCase):
         s.close()
         with self.assertRaises(socket.error):
             s.shutdown(socket.SHUT_RDWR)
-
-    def test_can_be_weak_ref(self):
-        # stdlib socket can be weak reffed.
-        import weakref
-        s = socket.socket()
-        try:
-            w = weakref.ref(s)
-            self.assertIsNotNone(w)
-        finally:
-            s.close()
-
-    def test_has_no_dict(self):
-        # stdlib socket has no dict
-        s = socket.socket()
-        try:
-            with self.assertRaises(AttributeError):
-                getattr(s, '__dict__')
-        finally:
-            s.close()
-
 
 if __name__ == '__main__':
     greentest.main()

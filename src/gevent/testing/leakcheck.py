@@ -21,6 +21,7 @@ from __future__ import print_function
 
 import sys
 import gc
+import types
 from functools import wraps
 import unittest
 
@@ -51,10 +52,8 @@ def ignores_leakcheck(func):
 
 class _RefCountChecker(object):
 
-    # Some builtin things that we ignore.
-    # For awhile, we also ignored types.FrameType and types.TracebackType,
-    # but those are important and often involved in leaks.
-    IGNORED_TYPES = (tuple, dict,)
+    # Some builtin things that we ignore
+    IGNORED_TYPES = (tuple, dict, types.FrameType, types.TracebackType)
     try:
         CALLBACK_KIND = gevent.core.callback
     except AttributeError:
@@ -73,25 +72,12 @@ class _RefCountChecker(object):
         self.needs_setUp = False
 
     def _ignore_object_p(self, obj):
-        if obj is self:
-            return False
-        try:
-            # Certain badly written __eq__ and __contains__ methods
-            # (I'm looking at you, Python 3.10 importlib.metadata._text!
-            # ``__eq__(self, other): return self.lower() == other.lower()``)
-            # raise AttributeError which propagates here, and must be caught.
-            # Similarly, we can get a TypeError
-            if (
-                obj in self.__dict__.values()
+        if (
+                obj is self
+                or obj in self.__dict__.values()
                 or obj == self._ignore_object_p # pylint:disable=comparison-with-callable
-            ):
-                return False
-        except (AttributeError, TypeError):
-            # `obj` is things like that _text class. Also have seen
-            # - psycopg2._psycopg.type
-            # - relstorage.adapters.drivers._ClassDriverFactory
-            return True
-
+        ):
+            return False
         kind = type(obj)
         if kind in self.IGNORED_TYPES:
             return False
@@ -141,7 +127,7 @@ class _RefCountChecker(object):
         if 'urlparse' in sys.modules:
             sys.modules['urlparse'].clear_cache()
         if 'urllib.parse' in sys.modules:
-            sys.modules['urllib.parse'].clear_cache() # pylint:disable=no-member
+            sys.modules['urllib.parse'].clear_cache()
 
         return self._growth()
 
